@@ -691,14 +691,19 @@ body.tiles-satellite { --tile-filter: none; }
 
   .map { top: calc(var(--header-h, 64px) + var(--top-controls-h, 0px)); }
 
-  /* Borders, no shadows — clean outlined controls on the white panel. */
+  /* Borders, no shadows — clean outlined controls on the white panel.
+     The map-style switcher stays unbordered (it lives on the panel too). */
   .search-wrap,
   .icon-btn,
-  .select-wrap select,
-  .map-style-switcher {
+  .select-wrap select {
     background: #fff;
     box-shadow: none !important;
     border: 1px solid rgba(0,0,0,0.16);
+  }
+  .map-style-switcher {
+    background: transparent;
+    box-shadow: none !important;
+    border: none;
   }
   .search-wrap:focus-within { border-color: var(--accent); }
 
@@ -739,9 +744,9 @@ body.tiles-satellite { --tile-filter: none; }
   }
   .map-style-switcher.is-open .ms-dot { display: inline-block; }
 
-  /* Lift the leaflet zoom buttons up so they sit above the bottom panel. */
+  /* Park the leaflet zoom buttons immediately above the bottom panel. */
   .leaflet-control-zoom {
-    margin-bottom: calc(var(--safe-bottom) + 132px) !important;
+    margin-bottom: calc(var(--bottom-panel-h, 96px) + 6px) !important;
     z-index: 1000 !important;
   }
 }

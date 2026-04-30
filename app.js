@@ -827,9 +827,11 @@ function wireUp() {
 function syncTopHeights() {
   const header = document.querySelector('.app-header');
   const top = document.querySelector('.top-controls');
+  const bottom = document.querySelector('.bottom-panel');
   const root = document.documentElement;
   if (header) root.style.setProperty('--header-h', header.offsetHeight + 'px');
   if (top) root.style.setProperty('--top-controls-h', top.offsetHeight + 'px');
+  if (bottom) root.style.setProperty('--bottom-panel-h', bottom.offsetHeight + 'px');
   if (typeof map !== 'undefined' && map.invalidateSize) map.invalidateSize();
 }
 
@@ -837,10 +839,8 @@ function watchTopHeights() {
   syncTopHeights();
   if (typeof ResizeObserver !== 'undefined') {
     const ro = new ResizeObserver(syncTopHeights);
-    const h = document.querySelector('.app-header');
-    const t = document.querySelector('.top-controls');
-    if (h) ro.observe(h);
-    if (t) ro.observe(t);
+    ['.app-header', '.top-controls', '.bottom-panel']
+      .forEach(sel => { const el = document.querySelector(sel); if (el) ro.observe(el); });
   }
   window.addEventListener('resize', syncTopHeights);
   window.addEventListener('orientationchange', syncTopHeights);
