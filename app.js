@@ -821,9 +821,35 @@ function wireUp() {
   });
 }
 
+// On mobile the map sits below the white top panel. Expose header /
+// top-controls heights as CSS vars so the layout can react to viewport
+// changes without hard-coding numbers.
+function syncTopHeights() {
+  const header = document.querySelector('.app-header');
+  const top = document.querySelector('.top-controls');
+  const root = document.documentElement;
+  if (header) root.style.setProperty('--header-h', header.offsetHeight + 'px');
+  if (top) root.style.setProperty('--top-controls-h', top.offsetHeight + 'px');
+  if (typeof map !== 'undefined' && map.invalidateSize) map.invalidateSize();
+}
+
+function watchTopHeights() {
+  syncTopHeights();
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(syncTopHeights);
+    const h = document.querySelector('.app-header');
+    const t = document.querySelector('.top-controls');
+    if (h) ro.observe(h);
+    if (t) ro.observe(t);
+  }
+  window.addEventListener('resize', syncTopHeights);
+  window.addEventListener('orientationchange', syncTopHeights);
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────
 async function boot() {
   wireUp();
+  watchTopHeights();
   await loadStations();
   render();
   locate({ silent: true });

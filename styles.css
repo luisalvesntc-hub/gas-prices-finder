@@ -673,50 +673,69 @@ body.tiles-satellite { --tile-filter: none; }
 
 /* ── Mobile (≤760 px) ────────────────────────────────────────────────── */
 @media (max-width: 760px) {
-  /* White panel behind the top controls, with a soft bottom shadow. */
+  /* Header on top of everything so the logo always shows. */
+  .app-header { z-index: 1200; }
+
+  /* The white panel sits *below* the header (no overlap), and the map
+     starts where the panel ends — controlled by JS-measured CSS vars. */
   .top-controls {
-    background: rgba(255,255,255,0.96);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid rgba(0,0,0,0.06);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.06);
-    padding-bottom: 12px;
+    top: var(--header-h, 64px);
+    z-index: 1100;
+    padding: var(--row-gap) 14px 12px;
+    background: #fff;
+    border-bottom: 1px solid rgba(0,0,0,0.10);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    pointer-events: auto;
   }
-  /* Search and filter selects sit on that white panel — drop their own
-     panel-style fills so they look like outlined controls, not glass. */
+  .top-controls-inner { pointer-events: auto; }
+
+  .map { top: calc(var(--header-h, 64px) + var(--top-controls-h, 0px)); }
+
+  /* Borders, no shadows — clean outlined controls on the white panel. */
   .search-wrap,
-  .select-wrap select,
   .icon-btn,
+  .select-wrap select,
   .map-style-switcher {
     background: #fff;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    box-shadow: none !important;
+    border: 1px solid rgba(0,0,0,0.16);
   }
+  .search-wrap:focus-within { border-color: var(--accent); }
 
-  /* All four selectors (fuel, brand, radius, map style) on a single row. */
-  .filter-row { flex-wrap: nowrap; gap: 6px; overflow-x: visible; }
-  .filter-row-left { gap: 6px; min-width: 0; flex: 1 1 auto; }
-  .select-wrap select {
+  /* Filter row: each select stretches to share the row equally. */
+  .filter-row { flex-wrap: nowrap; gap: 8px; overflow-x: visible; align-items: stretch; }
+  .filter-row-left {
+    flex: 1 1 auto;
+    gap: 8px;
+    min-width: 0;
+    display: flex;
+  }
+  .filter-row-left .select-wrap { flex: 1 1 0; min-width: 0; }
+  .filter-row-left select {
+    width: 100%;
     font-size: 12px;
-    padding: 8px 26px 8px 12px;
+    padding: 9px 26px 9px 12px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
   }
-  /* Brand select truncates on mobile so the row stays single-line. */
-  #brand-select { max-width: 110px; text-overflow: ellipsis; }
+  /* Drop the auto-width JS sets on desktop — let flex govern. */
+  #brand-select { max-width: none; }
 
-  /* Map style: only the active dot is visible; tap to open a vertical
-     popover with the others stacked. */
-  .map-style-switcher {
-    padding: 6px;
-    align-items: center;
-  }
+  /* Map style: only the active dot visible; tap → vertical popover. */
+  .filter-row-right { position: relative; }
+  .map-style-switcher { padding: 8px; align-items: center; gap: 0; }
   .map-style-switcher .ms-dot { display: none; }
   .map-style-switcher .ms-dot[aria-checked="true"] { display: inline-block; }
 
   .map-style-switcher.is-open {
+    position: absolute;
+    top: 0; right: 0;
     flex-direction: column;
     gap: 8px;
     padding: 8px;
     border-radius: 22px;
-    position: relative;
+    z-index: 5;
   }
   .map-style-switcher.is-open .ms-dot { display: inline-block; }
 
@@ -731,10 +750,8 @@ body.tiles-satellite { --tile-filter: none; }
   .logo-mark { width: 32px; height: 36px; }
   .logo-title { font-size: 17px; }
   .logo-tag { font-size: 9px; letter-spacing: 1.4px; }
-  .top-controls { padding-top: calc(var(--safe-top) + 60px + var(--row-gap)); }
   .station-list { max-height: 240px; }
   .search-wrap { height: 50px; }
   .icon-btn { width: 50px; height: 50px; }
-  #brand-select { max-width: 96px; }
-  .select-wrap select { font-size: 11.5px; padding: 7px 22px 7px 10px; }
+  .filter-row-left select { font-size: 11.5px; padding: 8px 22px 8px 10px; }
 }
