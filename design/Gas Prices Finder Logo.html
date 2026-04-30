@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gas Prices Finder — Combined Variant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0f0f0; font-family: sans-serif; }
+  .bg-white { background: #ffffff; display:flex; align-items:center; justify-content:center; width:100%; height:100%; padding:48px; }
+  .bg-navy  { background: #1C2D5A; display:flex; align-items:center; justify-content:center; width:100%; height:100%; padding:48px; }
+  .bg-amber { background: #F5A623; display:flex; align-items:center; justify-content:center; width:100%; height:100%; padding:48px; }
+</style>
+</head>
+<body>
+<script type="text/babel">
+
+const NAVY  = "#1C2D5A";
+const AMBER = "#F08C00";
+const ORANGE = "#F5A623";
+const WHITE  = "#FFFFFF";
+
+/* V2 icon: amber drop + navy magnifier
+   V3 lettering: single-line bold, "Gas Prices" in navy/white, "Finder" in amber, tagline below */
+function Logo({ bg }) {
+  const dark = bg === "navy";
+  const textMain  = dark ? WHITE : NAVY;
+  const textSub   = dark ? ORANGE : AMBER;
+  const tagColor  = dark ? WHITE : NAVY;
+  // Icon always uses the dark-bg rendering (white magnifier ring)
+  const magStroke = WHITE;
+  const dollarCol = NAVY;
+
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+      {/* V2 icon */}
+      <svg width="90" height="96" viewBox="0 0 82 92" fill="none">
+        <defs>
+          <linearGradient id="cDrop" x1="16" y1="5" x2="64" y2="86" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#FFE566"/>
+            <stop offset="60%" stopColor={ORANGE}/>
+            <stop offset="100%" stopColor={AMBER}/>
+          </linearGradient>
+          <linearGradient id="cMag" x1="20" y1="32" x2="58" y2="68" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#FFE07A"/>
+            <stop offset="100%" stopColor={AMBER}/>
+          </linearGradient>
+        </defs>
+        {/* Amber drop */}
+        <path d="M40 5 C40 5 10 36 10 56 C10 74 24 86 40 86 C56 86 70 74 70 56 C70 36 40 5 40 5Z" fill="url(#cDrop)"/>
+        {/* Sheen */}
+        <ellipse cx="29" cy="48" rx="6" ry="12" fill={WHITE} opacity="0.18" transform="rotate(-15 29 48)"/>
+        {/* Magnifier ring — navy on white/amber bg, white on dark bg */}
+        <circle cx="38" cy="50" r="16" fill={WHITE} opacity="0.97"/>
+        <circle cx="38" cy="50" r="16" fill="none" stroke={magStroke} strokeWidth="4.5"/>
+        {/* Handle */}
+        <line x1="49" y1="61" x2="62" y2="74" stroke={magStroke} strokeWidth="6" strokeLinecap="round"/>
+        {/* $ */}
+        <text x="38" y="58" textAnchor="middle" fontFamily="'Nunito',sans-serif" fontWeight="900" fontSize="22" fill={dollarCol}>$</text>
+      </svg>
+
+      {/* V3-style wordmark: one visual line, tagline below */}
+      <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontWeight:900, fontSize:34, lineHeight:1, letterSpacing:-1, whiteSpace:"nowrap" }}>
+          <span style={{ color: textMain }}>Gas Prices </span>
+          <span style={{ color: textSub }}>Finder</span>
+        </div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontWeight:700, fontSize:12.5, color: tagColor, letterSpacing:2.5, textTransform:"uppercase", opacity:0.45, whiteSpace:"nowrap" }}>
+          Find the best price near you
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <DesignCanvas title="Gas Prices Finder — V2 icon · V3 lettering">
+      <DCSection id="s1" title="V2 icon + V3 lettering">
+        <DCArtboard id="a1" label="White bg" width={580} height={200}>
+          <div className="bg-white"><Logo bg="white"/></div>
+        </DCArtboard>
+        <DCArtboard id="a2" label="Dark bg" width={580} height={200}>
+          <div className="bg-navy"><Logo bg="navy"/></div>
+        </DCArtboard>
+        <DCArtboard id="a3" label="Amber bg" width={580} height={200}>
+          <div className="bg-amber"><Logo bg="amber"/></div>
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+<div id="root"></div>
+</body>
+</html>

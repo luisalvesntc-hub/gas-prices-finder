@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#FAF9F7" />
+<title>Gas Prices Finder · Portugal</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="app-header" id="app-header">
+  <a class="logo" href="./" aria-label="Gas Prices Finder">
+    <svg class="logo-mark" width="38" height="42" viewBox="0 0 82 92" aria-hidden="true">
+      <defs>
+        <linearGradient id="lgDrop" x1="16" y1="5" x2="64" y2="86" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#FFE566"/>
+          <stop offset="60%" stop-color="#F5A623"/>
+          <stop offset="100%" stop-color="#F08C00"/>
+        </linearGradient>
+      </defs>
+      <path d="M40 5C40 5 10 36 10 56C10 74 24 86 40 86C56 86 70 74 70 56C70 36 40 5 40 5Z" fill="url(#lgDrop)"/>
+      <ellipse cx="29" cy="48" rx="6" ry="12" fill="#fff" opacity=".18" transform="rotate(-15 29 48)"/>
+      <circle cx="38" cy="50" r="16" fill="#fff" opacity=".97"/>
+      <circle cx="38" cy="50" r="16" fill="none" stroke="#fff" stroke-width="4.5"/>
+      <line x1="49" y1="61" x2="62" y2="74" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+      <text x="38" y="58" text-anchor="middle" font-family="Nunito,sans-serif" font-weight="900" font-size="22" fill="#1C2D5A">$</text>
+    </svg>
+    <div class="logo-words">
+      <div class="logo-title">Gas Prices <span>Finder</span></div>
+      <div class="logo-tag">Encontre o preço mais baixo perto de si</div>
+    </div>
+  </a>
+</header>
+
+<div class="top-controls">
+  <div class="control-row">
+    <label class="search-wrap">
+      <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+        <path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <input id="search" class="search-input" type="search" placeholder="Procurar posto, morada ou localidade…" autocomplete="off" />
+      <button id="search-clear" class="search-clear" type="button" aria-label="Limpar pesquisa" hidden>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </label>
+
+    <button id="locate-btn" class="icon-btn" type="button" aria-label="Encontrar a minha localização">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="3.2" fill="currentColor"/>
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="filter-row" id="fuel-pills" role="tablist" aria-label="Tipo de combustível"></div>
+
+  <div class="filter-row brand-row">
+    <div class="select-wrap">
+      <select id="brand-select" aria-label="Marca">
+        <option value="">Todas as marcas</option>
+      </select>
+      <svg class="select-caret" width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+    </div>
+    <div class="select-wrap">
+      <select id="radius-select" aria-label="Raio de pesquisa">
+        <option value="3">3 km</option>
+        <option value="5">5 km</option>
+        <option value="10">10 km</option>
+        <option value="25">25 km</option>
+        <option value="0" selected>Mapa visível</option>
+      </select>
+      <svg class="select-caret" width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+    </div>
+  </div>
+</div>
+
+<main id="map" class="map" aria-label="Mapa de postos de combustível"></main>
+
+<div class="bottom-panel" id="bottom-panel">
+  <div class="stat-row">
+    <button class="stat-chip stat-cheapest" id="cheapest-chip" type="button" hidden>
+      <span class="dot dot-green"></span>
+      <span class="stat-label">Mais barato</span>
+      <span class="stat-price" id="cheapest-price"></span>
+    </button>
+    <div class="stat-chip stat-count">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="currentColor"/></svg>
+      <span id="count-label">0 postos</span>
+    </div>
+  </div>
+
+  <section class="list-card" aria-labelledby="list-title">
+    <button class="list-toggle" id="list-toggle" type="button" aria-expanded="false">
+      <span class="list-toggle-left">
+        <span class="list-icon" aria-hidden="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </span>
+        <span id="list-title">Postos próximos</span>
+      </span>
+      <span class="list-toggle-right">
+        <span class="sort-tabs" role="tablist" aria-label="Ordenar lista">
+          <button class="sort-tab" data-sort="distance" type="button" role="tab" aria-selected="true">Mais próximo</button>
+          <button class="sort-tab" data-sort="price" type="button" role="tab" aria-selected="false">Mais barato</button>
+        </span>
+        <svg class="caret" width="12" height="8" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+      </span>
+    </button>
+    <ul class="station-list" id="station-list" hidden></ul>
+  </section>
+</div>
+
+<div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="app.js"></script>
+</body>
+</html>

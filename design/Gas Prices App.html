@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gas Prices Near You</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+html, body, #root {
+  width:100%; height:100%; overflow:hidden;
+  font-family:-apple-system,"SF Pro Display","SF Pro Text",BlinkMacSystemFont,"Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+.leaflet-tile { filter: var(--tile-filter, saturate(0.82) brightness(1.03)); }
+
+.leaflet-control-attribution {
+  font-family:-apple-system,sans-serif; font-size:10px;
+  background:rgba(255,255,255,0.65)!important;
+  backdrop-filter:blur(10px); border-radius:6px!important;
+}
+.leaflet-control-zoom { border:none!important; border-radius:12px!important; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,0.13)!important; }
+.leaflet-control-zoom a {
+  font-family:-apple-system,sans-serif!important;
+  color:#1d1d1f!important;
+  background:rgba(255,255,255,0.88)!important;
+  backdrop-filter:blur(20px)!important;
+  border:none!important;
+  width:36px!important; height:36px!important; line-height:36px!important; font-size:18px!important;
+}
+.leaflet-control-zoom a:hover { background:rgba(255,255,255,0.98)!important; }
+
+.leaflet-popup-content-wrapper {
+  background:rgba(255,255,255,0.88)!important;
+  backdrop-filter:blur(30px)!important; -webkit-backdrop-filter:blur(30px)!important;
+  border:1px solid rgba(255,255,255,0.6)!important;
+  border-radius:16px!important;
+  box-shadow:0 8px 32px rgba(0,0,0,0.14),0 2px 8px rgba(0,0,0,0.07)!important;
+  padding:0!important; overflow:hidden;
+}
+.leaflet-popup-content { margin:0!important; }
+.leaflet-popup-tip-container { display:none; }
+.leaflet-popup-close-button {
+  top:10px!important; right:10px!important;
+  color:#6e6e73!important; font-size:16px!important;
+  width:22px!important; height:22px!important; line-height:22px!important;
+  background:rgba(0,0,0,0.06)!important; border-radius:50%!important;
+  text-align:center!important; z-index:10!important;
+}
+
+/* Pulsing location dot */
+@keyframes locPulse {
+  0%   { transform:scale(1);   opacity:0.5; }
+  70%  { transform:scale(2.4); opacity:0; }
+  100% { transform:scale(2.4); opacity:0; }
+}
+.loc-dot-ring {
+  position:absolute; inset:0; border-radius:50%;
+  background:var(--accent, #0071e3);
+  animation: locPulse 2s ease-out infinite;
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const __TWEAKS_STYLE = `
+  .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
+    max-height:calc(100vh - 32px);display:flex;flex-direction:column;
+    background:rgba(250,249,247,.78);color:#29261b;
+    -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+    border:.5px solid rgba(255,255,255,.6);border-radius:14px;
+    box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 12px 40px rgba(0,0,0,.18);
+    font:11.5px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
+  .twk-hd{display:flex;align-items:center;justify-content:space-between;
+    padding:10px 8px 10px 14px;cursor:move;user-select:none}
+  .twk-hd b{font-size:12px;font-weight:600;letter-spacing:.01em}
+  .twk-x{appearance:none;border:0;background:transparent;color:rgba(41,38,27,.55);
+    width:22px;height:22px;border-radius:6px;cursor:default;font-size:13px;line-height:1}
+  .twk-x:hover{background:rgba(0,0,0,.06);color:#29261b}
+  .twk-body{padding:2px 14px 14px;display:flex;flex-direction:column;gap:10px;
+    overflow-y:auto;overflow-x:hidden;min-height:0;
+    scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.15) transparent}
+  .twk-row{display:flex;flex-direction:column;gap:5px}
+  .twk-row-h{flex-direction:row;align-items:center;justify-content:space-between;gap:10px}
+  .twk-lbl{display:flex;justify-content:space-between;align-items:baseline;color:rgba(41,38,27,.72)}
+  .twk-lbl>span:first-child{font-weight:500}
+  .twk-val{color:rgba(41,38,27,.5);font-variant-numeric:tabular-nums}
+  .twk-sect{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:rgba(41,38,27,.45);padding:10px 0 0}
+  .twk-sect:first-child{padding-top:0}
+  .twk-seg{position:relative;display:flex;padding:2px;border-radius:8px;
+    background:rgba(0,0,0,.06);user-select:none}
+  .twk-seg-thumb{position:absolute;top:2px;bottom:2px;border-radius:6px;
+    background:rgba(255,255,255,.9);box-shadow:0 1px 2px rgba(0,0,0,.12);
+    transition:left .15s cubic-bezier(.3,.7,.4,1),width .15s}
+  .twk-seg.dragging .twk-seg-thumb{transition:none}
+  .twk-seg button{appearance:none;position:relative;z-index:1;flex:1;border:0;
+    background:transparent;color:inherit;font:inherit;font-weight:500;min-height:22px;
+    border-radius:6px;cursor:default;padding:4px 6px;line-height:1.2;overflow-wrap:anywhere}
+  .twk-toggle{position:relative;width:32px;height:18px;border:0;border-radius:999px;
+    background:rgba(0,0,0,.15);transition:background .15s;cursor:default;padding:0}
+  .twk-toggle[data-on="1"]{background:#34c759}
+  .twk-toggle i{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+  .twk-toggle[data-on="1"] i{transform:translateX(14px)}
+`;
+
+function useTweaks(defaults) {
+  const [values, setValues] = React.useState(defaults);
+  const setTweak = React.useCallback((keyOrEdits, val) => {
+    const edits = typeof keyOrEdits === 'object' && keyOrEdits !== null
+      ? keyOrEdits : { [keyOrEdits]: val };
+    setValues(prev => ({ ...prev, ...edits }));
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
+  }, []);
+  return [values, setTweak];
+}
+
+function TweaksPanel({ title = 'Tweaks', children }) {
+  const [open, setOpen] = React.useState(false);
+  const dragRef = React.useRef(null);
+  const offsetRef = React.useRef({ x: 16, y: 16 });
+  const PAD = 16;
+  const clampToViewport = React.useCallback(() => {
+    const panel = dragRef.current; if (!panel) return;
+    const w = panel.offsetWidth, h = panel.offsetHeight;
+    const maxRight = Math.max(PAD, window.innerWidth - w - PAD);
+    const maxBottom = Math.max(PAD, window.innerHeight - h - PAD);
+    offsetRef.current = {
+      x: Math.min(maxRight, Math.max(PAD, offsetRef.current.x)),
+      y: Math.min(maxBottom, Math.max(PAD, offsetRef.current.y)),
+    };
+    panel.style.right = offsetRef.current.x + 'px';
+    panel.style.bottom = offsetRef.current.y + 'px';
+  }, []);
+  React.useEffect(() => {
+    if (!open) return;
+    clampToViewport();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(clampToViewport) : null;
+    if (ro) ro.observe(document.documentElement);
+    else window.addEventListener('resize', clampToViewport);
+    return () => ro ? ro.disconnect() : window.removeEventListener('resize', clampToViewport);
+  }, [open, clampToViewport]);
+  React.useEffect(() => {
+    const onMsg = e => {
+      const t = e?.data?.type;
+      if (t === '__activate_edit_mode') setOpen(true);
+      else if (t === '__deactivate_edit_mode') setOpen(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+  const dismiss = () => { setOpen(false); window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*'); };
+  const onDragStart = e => {
+    const panel = dragRef.current; if (!panel) return;
+    const r = panel.getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY;
+    const startRight = window.innerWidth - r.right, startBottom = window.innerHeight - r.bottom;
+    const move = ev => { offsetRef.current = { x: startRight-(ev.clientX-sx), y: startBottom-(ev.clientY-sy) }; clampToViewport(); };
+    const up = () => { window.removeEventListener('mousemove',move); window.removeEventListener('mouseup',up); };
+    window.addEventListener('mousemove',move); window.addEventListener('mouseup',up);
+  };
+  if (!open) return null;
+  return (<>
+    <style>{__TWEAKS_STYLE}</style>
+    <div ref={dragRef} className="twk-panel" style={{ right: offsetRef.current.x, bottom: offsetRef.current.y }}>
+      <div className="twk-hd" onMouseDown={onDragStart}>
+        <b>{title}</b>
+        <button className="twk-x" onMouseDown={e=>e.stopPropagation()} onClick={dismiss}>✕</button>
+      </div>
+      <div className="twk-body">{children}</div>
+    </div>
+  </>);
+}
+
+function TweakSection({ label, children }) {
+  return (<><div className="twk-sect">{label}</div>{children}</>);
+}
+
+function TweakRow({ label, value, children, inline = false }) {
+  return (
+    <div className={inline ? 'twk-row twk-row-h' : 'twk-row'}>
+      <div className="twk-lbl"><span>{label}</span>{value != null && <span className="twk-val">{value}</span>}</div>
+      {children}
+    </div>
+  );
+}
+
+function TweakRadio({ label, tweakKey, options, tweaks, setTweak }) {
+  const value = tweaks[tweakKey];
+  const trackRef = React.useRef(null);
+  const [dragging, setDragging] = React.useState(false);
+  const opts = options.map(o => typeof o === 'object' ? o : { value: o, label: o });
+  const idx = Math.max(0, opts.findIndex(o => o.value === value));
+  const n = opts.length;
+  const valueRef = React.useRef(value); valueRef.current = value;
+  const segAt = clientX => {
+    const r = trackRef.current.getBoundingClientRect();
+    const i = Math.floor(((clientX - r.left - 2) / (r.width - 4)) * n);
+    return opts[Math.max(0, Math.min(n-1, i))].value;
+  };
+  const onPointerDown = e => {
+    setDragging(true);
+    const v0 = segAt(e.clientX); if (v0 !== valueRef.current) setTweak(tweakKey, v0);
+    const move = ev => { if (!trackRef.current) return; const v = segAt(ev.clientX); if (v !== valueRef.current) setTweak(tweakKey, v); };
+    const up = () => { setDragging(false); window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+    window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+  };
+  return (
+    <TweakRow label={label}>
+      <div ref={trackRef} role="radiogroup" onPointerDown={onPointerDown} className={dragging?'twk-seg dragging':'twk-seg'}>
+        <div className="twk-seg-thumb" style={{ left:`calc(2px + ${idx} * (100% - 4px) / ${n})`, width:`calc((100% - 4px) / ${n})` }}/>
+        {opts.map(o => <button key={o.value} type="button" role="radio" aria-checked={o.value===value}>{o.label}</button>)}
+      </div>
+    </TweakRow>
+  );
+}
+
+function TweakToggle({ label, tweakKey, tweaks, setTweak }) {
+  const value = tweaks[tweakKey];
+  return (
+    <div className="twk-row twk-row-h">
+      <div className="twk-lbl"><span>{label}</span></div>
+      <button type="button" className="twk-toggle" data-on={value?'1':'0'} role="switch" aria-checked={!!value} onClick={()=>setTweak(tweakKey,!value)}><i/></button>
+    </div>
+  );
+}
+
+Object.assign(window, { useTweaks, TweaksPanel, TweakSection, TweakRow, TweakRadio, TweakToggle });
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Seeded RNG (mulberry32) ─────────────────────────────────────────────────
+function seededRand(seed) {
+  let s = seed;
+  return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+// ── All possible brands, each with which gas types they carry ───────────────
+const ALL_BRANDS = [
+  { name:"Chevron",  color:"#0055A5", types:["regular","mid","premium","diesel"] },
+  { name:"Shell",    color:"#DD1D21", types:["regular","mid","premium","diesel"] },
+  { name:"ARCO",     color:"#0055A5", types:["regular","mid","premium"] },
+  { name:"76",       color:"#F7941D", types:["regular","mid","premium","diesel"] },
+  { name:"BP",       color:"#00B140", types:["regular","mid","premium","diesel"] },
+  { name:"Costco",   color:"#005DAA", types:["regular","premium","diesel"] },
+  { name:"Valero",   color:"#CC0000", types:["regular","mid","premium","diesel"] },
+  { name:"Mobil",    color:"#E3000F", types:["regular","mid","premium"] },
+  { name:"Exxon",    color:"#E3000F", types:["regular","mid","premium","diesel"] },
+  { name:"Sunoco",   color:"#1C63B7", types:["regular","mid","premium"] },
+  { name:"Marathon", color:"#003087", types:["regular","mid","premium","diesel"] },
+  { name:"Circle K", color:"#E31837", types:["regular","mid","premium"] },
+];
+
+const ALL_GAS_TYPES = [
+  { id:"regular", label:"Regular", sub:"87" },
+  { id:"mid",     label:"Mid",     sub:"89" },
+  { id:"premium", label:"Premium", sub:"91" },
+  { id:"diesel",  label:"Diesel",  sub:"" },
+];
+
+const STREET_NAMES = ["Main","Oak","Maple","1st","Park","Lake","Hill","Cedar","Pine","Elm","Market","Broadway","Central","Washington","Lincoln","Jefferson"];
+const CROSS_NAMES  = ["Ave","St","Blvd","Dr","Way","Rd"];
+
+// ── Generate stations around a lat/lng ─────────────────────────────────────
+function generateStations(centerLat, centerLng) {
+  // Seed based on ~0.05° grid cell so same area = same stations
+  const cellLat = Math.round(centerLat / 0.04);
+  const cellLng = Math.round(centerLng / 0.04);
+  const seed = Math.abs((cellLat * 73856093) ^ (cellLng * 19349663)) | 0;
+  const rand = seededRand(seed);
+
+  // Pick 5-7 brands available in this area
+  const shuffled = [...ALL_BRANDS].sort(() => rand() - 0.5);
+  const areaCount = 5 + Math.floor(rand() * 3);
+  const areaBrands = shuffled.slice(0, areaCount);
+
+  // Base price for this region (varies by cell)
+  const basePrice = 3.60 + rand() * 0.60;
+
+  const stations = [];
+  for (let i = 0; i < areaBrands.length + 2; i++) {
+    const brand = areaBrands[i % areaBrands.length];
+    const dlat = (rand() - 0.5) * 0.04;
+    const dlng = (rand() - 0.5) * 0.05;
+    const dist = Math.round((Math.sqrt(dlat*dlat + dlng*dlng) * 111) * 10) / 10;
+    const street = STREET_NAMES[Math.floor(rand() * STREET_NAMES.length)];
+    const cross = STREET_NAMES[Math.floor(rand() * STREET_NAMES.length)];
+    const suffix = CROSS_NAMES[Math.floor(rand() * CROSS_NAMES.length)];
+    const prices = {};
+    brand.types.forEach(t => {
+      const offset = { regular:0, mid:0.18, premium:0.38, diesel:0.28 }[t];
+      prices[t] = Math.round((basePrice + offset + (rand()-0.5)*0.22) * 100) / 100;
+    });
+    stations.push({
+      id: seed + i,
+      name: brand.name,
+      brand: brand.name,
+      color: brand.color,
+      lat: centerLat + dlat,
+      lng: centerLng + dlng,
+      address: `${street} ${suffix} & ${cross}`,
+      prices,
+      distance: Math.max(0.1, dist),
+      availableTypes: brand.types,
+    });
+  }
+  return stations;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function priceColor(price, accent) {
+  if (!price) return "#8e8e93";
+  if (price < 3.80) return "#34c759";
+  if (price < 4.05) return "#ff9500";
+  return "#ff3b30";
+}
+
+function makeMarkerHTML(station, gasType, selected, accent) {
+  const price = station.prices[gasType];
+  const priceLabel = price ? `$${price.toFixed(2)}` : "N/A";
+  const bg = selected ? accent : "#fff";
+  const priceClr = selected ? "rgba(255,255,255,0.9)" : priceColor(price);
+  const nameClr  = selected ? "#fff" : "#1d1d1f";
+  const border = selected ? accent : "rgba(0,0,0,0.11)";
+  return `<div style="
+    background:${bg};border:1.5px solid ${border};border-radius:14px;
+    padding:6px 12px 5px;font-family:-apple-system,sans-serif;
+    box-shadow:0 4px 16px rgba(0,0,0,${selected?0.24:0.13}),0 1.5px 4px rgba(0,0,0,0.07);
+    white-space:nowrap;cursor:pointer;text-align:center;min-width:62px;
+  ">
+    <div style="font-size:11px;font-weight:600;color:${nameClr};letter-spacing:-0.1px;opacity:${selected?1:0.75};">${station.brand}</div>
+    <div style="font-size:14px;font-weight:700;color:${priceClr};letter-spacing:-0.5px;margin-top:1px;">${priceLabel}</div>
+  </div>`;
+}
+
+function makePopupHTML(station, gasType, accent) {
+  const typeLabels = { regular:"Regular 87", mid:"Mid 89", premium:"Premium 91", diesel:"Diesel" };
+  const rows = ALL_GAS_TYPES.map(t => {
+    if (!station.availableTypes.includes(t.id)) return '';
+    const p = station.prices[t.id];
+    const active = t.id === gasType;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;
+      padding:8px 16px;
+      background:${active?`${accent}12`:'transparent'};
+      border-left:3px solid ${active?accent:'transparent'};">
+      <span style="font-size:13px;color:${active?accent:'#1d1d1f'};font-weight:${active?600:400};">${typeLabels[t.id]}</span>
+      <span style="font-size:14px;font-weight:600;color:${p?priceColor(p):'#8e8e93'};">${p?'$'+p.toFixed(2):'—'}</span>
+    </div>`;
+  }).join('');
+  return `<div style="width:248px;font-family:-apple-system,sans-serif;">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid rgba(0,0,0,0.06);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+        <div style="width:8px;height:8px;border-radius:50%;background:${station.color};flex-shrink:0;"></div>
+        <span style="font-size:15px;font-weight:600;color:#1d1d1f;">${station.name}</span>
+      </div>
+      <div style="font-size:12px;color:#6e6e73;padding-left:16px;">${station.address} · ${station.distance} mi away</div>
+    </div>
+    <div style="padding:4px 0;">${rows}</div>
+    <div style="padding:10px 16px;border-top:1px solid rgba(0,0,0,0.06);">
+      <div style="background:${accent};color:#fff;font-size:13px;font-weight:500;
+        border-radius:8px;padding:7px 0;text-align:center;cursor:pointer;">Get Directions</div>
+    </div>
+  </div>`;
+}
+
+// ── Tile layers ──────────────────────────────────────────────────────────────
+const TILE_CONFIGS = {
+  light: {
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    filter: 'saturate(0.82) brightness(1.03)',
+  },
+  dark: {
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    filter: 'none',
+  },
+  warm: {
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    filter: 'saturate(0.75) sepia(0.12) brightness(1.0)',
+  },
+};
+
+// ── Accent palettes ──────────────────────────────────────────────────────────
+const ACCENT_COLORS = {
+  blue:  "#0071e3",
+  teal:  "#00a693",
+  amber: "#e07b00",
+};
+
+// ── Tweak defaults ───────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "mapStyle": "warm",
+  "accentColor": "blue",
+  "uiDensity": "spacious",
+  "logoStyle": "radar"
+}/*EDITMODE-END*/;
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  const mapRef        = useRef(null);
+  const leafletMap    = useRef(null);
+  const tileLayerRef  = useRef(null);
+  const markersRef    = useRef({});
+  const locationDotRef = useRef(null);
+
+  const [gasType,   setGasType]   = useState("regular");
+  const [brand,     setBrand]     = useState("All Brands");
+  const [search,    setSearch]    = useState("");
+  const [selected,  setSelected]  = useState(null);
+  const [sortBy,    setSortBy]    = useState("distance");
+  const [listOpen,  setListOpen]  = useState(false);
+  const [stations,  setStations]  = useState([]);
+  const [userPos,   setUserPos]   = useState(null);
+  const [locStatus, setLocStatus] = useState("loading"); // loading | ok | denied
+
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [isolated, setIsolated] = useState(false);
+  const accent = ACCENT_COLORS[tweaks.accentColor] || ACCENT_COLORS.blue;
+
+  // Density sizing
+  const density = {
+    compact:     { pill:"5px 12px", pill_fs:12, bar:40, bRadius:12, listMax:220 },
+    comfortable: { pill:"7px 16px", pill_fs:13, bar:46, bRadius:14, listMax:260 },
+    spacious:    { pill:"9px 20px", pill_fs:14, bar:52, bRadius:16, listMax:300 },
+  }[tweaks.uiDensity] || density?.comfortable;
+
+  // ── Init map ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (leafletMap.current) return;
+    leafletMap.current = L.map(mapRef.current, {
+      center: [37.7749, -122.4194], zoom: 14,
+      zoomControl: false,
+    });
+    L.control.zoom({ position: 'bottomright' }).addTo(leafletMap.current);
+
+    const cfg = TILE_CONFIGS[TWEAK_DEFAULTS.mapStyle];
+    document.documentElement.style.setProperty('--tile-filter', cfg.filter);
+    tileLayerRef.current = L.tileLayer(cfg.url, {
+      attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19,
+    }).addTo(leafletMap.current);
+
+    // Re-generate stations when map moves
+    leafletMap.current.on('moveend', () => {
+      const c = leafletMap.current.getCenter();
+      setStations(generateStations(c.lat, c.lng));
+      setIsolated(false);
+    });
+
+    // Geolocation
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const { latitude: lat, longitude: lng } = pos.coords;
+          setUserPos({ lat, lng });
+          setLocStatus("ok");
+          leafletMap.current.setView([lat, lng], 14, { animate: true });
+          setStations(generateStations(lat, lng));
+        },
+        () => {
+          setLocStatus("denied");
+          setStations(generateStations(37.7749, -122.4194));
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    } else {
+      setLocStatus("denied");
+      setStations(generateStations(37.7749, -122.4194));
+    }
+  }, []);
+
+  // ── Tile layer swap on mapStyle tweak ─────────────────────────────────────
+  useEffect(() => {
+    if (!leafletMap.current || !tileLayerRef.current) return;
+    const cfg = TILE_CONFIGS[tweaks.mapStyle];
+    tileLayerRef.current.remove();
+    document.documentElement.style.setProperty('--tile-filter', cfg.filter);
+    tileLayerRef.current = L.tileLayer(cfg.url, {
+      attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19,
+    }).addTo(leafletMap.current);
+    tileLayerRef.current.bringToBack();
+  }, [tweaks.mapStyle]);
+
+  // ── User location dot ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!leafletMap.current || !userPos) return;
+    if (locationDotRef.current) locationDotRef.current.remove();
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="position:relative;width:18px;height:18px;">
+        <div class="loc-dot-ring" style="--accent:${accent}"></div>
+        <div style="position:absolute;inset:3px;border-radius:50%;background:${accent};box-shadow:0 0 0 2.5px #fff,0 2px 8px rgba(0,0,0,0.22);"></div>
+      </div>`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+    locationDotRef.current = L.marker([userPos.lat, userPos.lng], { icon, zIndexOffset: 1000 })
+      .addTo(leafletMap.current);
+  }, [userPos, accent]);
+
+  // ── Derived data ──────────────────────────────────────────────────────────
+  // Available brands from current stations
+  const availableBrands = ["All Brands", ...Array.from(new Set(stations.map(s => s.brand))).sort()];
+
+  // Available gas types from current stations (union of all brands carrying that type)
+  const availableTypes = ALL_GAS_TYPES.filter(t =>
+    stations.some(s => s.availableTypes.includes(t.id))
+  );
+
+  // Reset gasType if current not available in area
+  useEffect(() => {
+    if (availableTypes.length && !availableTypes.find(t => t.id === gasType)) {
+      setGasType(availableTypes[0].id);
+    }
+  }, [availableTypes]);
+
+  // Reset brand if not in area
+  useEffect(() => {
+    if (brand !== "All Brands" && !availableBrands.includes(brand)) {
+      setBrand("All Brands");
+    }
+  }, [availableBrands]);
+
+  const filtered = stations.filter(s => {
+    const matchBrand = brand === "All Brands" || s.brand === brand;
+    const matchSearch = !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.address.toLowerCase().includes(search.toLowerCase());
+    const hasPrice = s.prices[gasType] != null;
+    return matchBrand && matchSearch && hasPrice;
+  }).sort((a, b) =>
+    sortBy === "distance"
+      ? a.distance - b.distance
+      : (a.prices[gasType]||999) - (b.prices[gasType]||999)
+  );
+
+  // ── Markers ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!leafletMap.current) return;
+    Object.values(markersRef.current).forEach(m => m.remove());
+    markersRef.current = {};
+    visibleStations.forEach(station => {
+      const isSel = selected?.id === station.id;
+      const icon = L.divIcon({
+        html: makeMarkerHTML(station, gasType, isSel, accent),
+        className: '', iconAnchor: [28, 16],
+      });
+      const marker = L.marker([station.lat, station.lng], { icon }).addTo(leafletMap.current);
+      marker.on('click', () => {
+        setSelected(station);
+        leafletMap.current.panTo([station.lat, station.lng], { animate:true, duration:0.4 });
+      });
+      markersRef.current[station.id] = marker;
+    });
+  }, [visibleStations, gasType, selected, accent]);
+
+  // ── Popup ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!leafletMap.current) return;
+    leafletMap.current.eachLayer(l => { if (l instanceof L.Popup) l.remove(); });
+    if (!selected) return;
+    L.popup({ closeButton:true, offset:[0,-10], autoPan:false })
+      .setLatLng([selected.lat, selected.lng])
+      .setContent(makePopupHTML(selected, gasType, accent))
+      .addTo(leafletMap.current)
+      .on('remove', () => setSelected(null));
+  }, [selected, gasType, accent]);
+
+  const cheapest = filtered.length ? Math.min(...filtered.map(s => s.prices[gasType]||999)) : null;
+  const cheapestStation = filtered.find(s => s.prices[gasType] === cheapest) || null;
+  const visibleStations = isolated && cheapestStation ? [cheapestStation] : filtered;
+
+  // ── Glass style helper ────────────────────────────────────────────────────
+  const glass = {
+    background: tweaks.mapStyle === 'dark' ? 'rgba(30,30,32,0.82)' : 'rgba(255,255,255,0.88)',
+    backdropFilter: 'blur(30px)',
+    WebkitBackdropFilter: 'blur(30px)',
+    border: tweaks.mapStyle === 'dark' ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(255,255,255,0.6)',
+    color: tweaks.mapStyle === 'dark' ? '#f5f5f7' : '#1d1d1f',
+  };
+  const textSec = tweaks.mapStyle === 'dark' ? '#aeaeb2' : '#6e6e73';
+  const dividerColor = tweaks.mapStyle === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+
+  const d = density;
+
+  return (
+    <>
+      <div ref={mapRef} style={{ position:'fixed', inset:0, width:'100vw', height:'100vh', zIndex:0 }}></div>
+
+      {/* ── Header / Logo ── */}
+      <div style={{
+        position:'fixed', top:0, left:0, right:0, zIndex:1001,
+        padding:'10px 16px 8px',
+        background: tweaks.mapStyle === 'dark' ? 'rgba(18,18,20,0.84)' : 'rgba(255,255,255,0.84)',
+        backdropFilter:'blur(30px)', WebkitBackdropFilter:'blur(30px)',
+        borderBottom:`1px solid ${tweaks.mapStyle==='dark'?'rgba(255,255,255,0.08)':'rgba(0,0,0,0.07)'}`,
+        display:'flex', alignItems:'center', gap:10,
+        pointerEvents:'none',
+      }}>
+        {/* Logo icon — Amber drop + navy magnifier + $ */}
+        <svg width="38" height="42" viewBox="0 0 82 92" fill="none">
+          <defs>
+            <linearGradient id="appDrop" x1="16" y1="5" x2="64" y2="86" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#FFE566"/>
+              <stop offset="60%" stopColor="#F5A623"/>
+              <stop offset="100%" stopColor="#F08C00"/>
+            </linearGradient>
+            <linearGradient id="appMag" x1="20" y1="32" x2="58" y2="68" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#FFE07A"/>
+              <stop offset="100%" stopColor="#F08C00"/>
+            </linearGradient>
+          </defs>
+          {/* Amber drop */}
+          <path d="M40 5 C40 5 10 36 10 56 C10 74 24 86 40 86 C56 86 70 74 70 56 C70 36 40 5 40 5Z" fill="url(#appDrop)"/>
+          {/* Sheen */}
+          <ellipse cx="29" cy="48" rx="6" ry="12" fill="white" opacity="0.18" transform="rotate(-15 29 48)"/>
+          {/* Magnifier ring — white */}
+          <circle cx="38" cy="50" r="16" fill="white" opacity="0.97"/>
+          <circle cx="38" cy="50" r="16" fill="none" stroke="white" strokeWidth="4.5"/>
+          {/* Handle */}
+          <line x1="49" y1="61" x2="62" y2="74" stroke="white" strokeWidth="6" strokeLinecap="round"/>
+          {/* $ */}
+          <text x="38" y="58" textAnchor="middle" fontFamily="'Nunito',sans-serif" fontWeight="900" fontSize="22" fill="#1C2D5A">$</text>
+        </svg>
+
+        {/* Wordmark */}
+        <div>
+          <div style={{
+            fontFamily:"'Nunito', sans-serif",
+            fontSize: 20, fontWeight: 900, letterSpacing:'-0.5px',
+            color: tweaks.mapStyle==='dark' ? '#f5f5f7' : '#1d1d1f',
+            lineHeight: 1, whiteSpace: 'nowrap',
+          }}>
+            Gas Prices <span style={{ color: '#F08C00' }}>Finder</span>
+          </div>
+          <div style={{
+            fontFamily:"'Nunito', sans-serif",
+            fontSize:11, fontWeight:700, letterSpacing:'2px',
+            textTransform:'uppercase',
+            color: tweaks.mapStyle==='dark' ? '#aeaeb2' : '#6e6e73',
+            marginTop:2, opacity:0.6, whiteSpace:'nowrap',
+          }}>
+            Find the best price near you
+          </div>
+        </div>
+      </div>
+
+      {/* ── Top bar ── */}
+      <div style={{ position:'fixed', top:0, left:0, right:0, zIndex:1000, padding:'64px 16px 0', pointerEvents:'none' }}>
+
+        {/* Search row */}
+        <div style={{ display:'flex', gap:10, marginBottom:10, pointerEvents:'all' }}>
+          <div style={{ flex:1, ...glass, borderRadius:d.bRadius, boxShadow:'0 4px 24px rgba(0,0,0,0.10)', display:'flex', alignItems:'center', padding:`0 14px`, height:d.bar, gap:8 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="7" stroke={textSec} strokeWidth="2"/>
+              <path d="M16.5 16.5L21 21" stroke={textSec} strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search stations or address…"
+              style={{ flex:1, border:'none', outline:'none', background:'transparent', fontFamily:'inherit', fontSize:d.pill_fs+1, color:glass.color, letterSpacing:'-0.2px' }}
+            />
+            {search && (
+              <button onClick={() => setSearch("")} style={{ background:'rgba(128,128,128,0.15)', border:'none', cursor:'pointer', borderRadius:'50%', width:18, height:18, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                <svg width="8" height="8" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1L1 9" stroke={textSec} strokeWidth="1.8" strokeLinecap="round"/></svg>
+              </button>
+            )}
+          </div>
+
+          {/* Locate me */}
+          <button onClick={() => userPos && leafletMap.current?.setView([userPos.lat, userPos.lng], 14, { animate:true })}
+            style={{ width:d.bar, height:d.bar, flexShrink:0, ...glass, borderRadius:d.bRadius, border: glass.border, boxShadow:'0 4px 24px rgba(0,0,0,0.10)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="4" fill={accent}/>
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+              <circle cx="12" cy="12" r="9" stroke={accent} strokeWidth="1.5"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Filter pills row */}
+        <div style={{ display:'flex', gap:8, overflowX:'auto', paddingBottom:2, scrollbarWidth:'none', pointerEvents:'all' }}>
+          {/* Gas type pills — only show types available in current area */}
+          {availableTypes.map(t => {
+            const active = gasType === t.id;
+            return (
+              <button key={t.id} onClick={() => setGasType(t.id)} style={{
+                flexShrink:0,
+                background: active ? accent : glass.background,
+                backdropFilter: glass.backdropFilter,
+                WebkitBackdropFilter: glass.WebkitBackdropFilter,
+                border: active ? `1px solid ${accent}` : glass.border,
+                borderRadius:20, padding:d.pill, cursor:'pointer',
+                fontFamily:'inherit', fontSize:d.pill_fs, fontWeight:500,
+                color: active ? '#fff' : glass.color,
+                boxShadow:'0 2px 12px rgba(0,0,0,0.09)',
+                display:'flex', alignItems:'center', gap:5,
+                transition:'all 0.15s ease',
+              }}>
+                {t.label}
+                {t.sub && <span style={{ opacity:0.6, fontSize:d.pill_fs-2 }}>{t.sub}</span>}
+              </button>
+            );
+          })}
+
+          <div style={{ width:1, background:dividerColor, margin:'4px 2px', flexShrink:0 }}></div>
+
+          {/* Brand dropdown — only shows brands in current area */}
+          <div style={{ position:'relative', flexShrink:0 }}>
+            <select value={brand} onChange={e => setBrand(e.target.value)} style={{
+              appearance:'none',
+              background: glass.background,
+              backdropFilter: glass.backdropFilter,
+              WebkitBackdropFilter: glass.WebkitBackdropFilter,
+              border: brand !== 'All Brands' ? `1px solid ${accent}` : glass.border,
+              borderRadius:20, padding:`${d.pill} 32px ${d.pill} 14px`.replace(/(\S+) 32px (\S+) 14px/, (_, a) => `${a} 32px ${a} 14px`),
+              paddingTop: d.pill.split(' ')[0], paddingBottom: d.pill.split(' ')[0],
+              paddingLeft:14, paddingRight:32,
+              fontFamily:'inherit', fontSize:d.pill_fs, fontWeight:500,
+              color: brand !== 'All Brands' ? accent : glass.color,
+              boxShadow:'0 2px 12px rgba(0,0,0,0.09)', cursor:'pointer', outline:'none',
+            }}>
+              {availableBrands.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+            <svg style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', pointerEvents:'none' }} width="10" height="6" viewBox="0 0 10 6">
+              <path d="M1 1l4 4 4-4" stroke={brand !== 'All Brands' ? accent : textSec} strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Location status toast ── */}
+      {locStatus === "loading" && (
+        <div style={{ position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:2000, ...glass, borderRadius:14, padding:'12px 20px', display:'flex', alignItems:'center', gap:10, boxShadow:'0 8px 32px rgba(0,0,0,0.14)' }}>
+          <div style={{ width:14, height:14, borderRadius:'50%', border:`2px solid ${accent}`, borderTopColor:'transparent', animation:'spin 0.8s linear infinite' }}></div>
+          <span style={{ fontSize:14, fontWeight:500, color:glass.color }}>Finding your location…</span>
+        </div>
+      )}
+
+      {/* ── Bottom panel ── */}
+      <div style={{ position:'fixed', bottom:0, left:0, right:0, zIndex:1000, padding:'0 16px 20px', pointerEvents:'none' }}>
+        {/* Stats row */}
+        <div style={{ display:'flex', gap:10, marginBottom:10, pointerEvents:'all' }}>
+          {cheapest && cheapestStation && (
+            <div
+              onClick={() => {
+                if (isolated) {
+                  setIsolated(false);
+                  setSelected(null);
+                } else {
+                  setIsolated(true);
+                  setSelected(cheapestStation);
+                  leafletMap.current?.panTo([cheapestStation.lat, cheapestStation.lng], { animate:true, duration:0.5 });
+                }
+              }}
+              style={{
+                background: isolated ? 'rgba(52,199,89,0.22)' : 'rgba(52,199,89,0.12)',
+                backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)',
+                border: isolated ? '1px solid rgba(52,199,89,0.6)' : '1px solid rgba(52,199,89,0.28)',
+                borderRadius:12, padding:'8px 14px',
+                display:'flex', alignItems:'center', gap:8,
+                cursor:'pointer', pointerEvents:'all',
+                transition:'all 0.18s ease',
+              }}>
+              <div style={{ width:7, height:7, borderRadius:'50%', background:'#34c759' }}></div>
+              <span style={{ fontSize:12, color:glass.color, fontWeight:500 }}>
+                {isolated ? 'Show all' : 'Lowest nearby'}
+              </span>
+              <span style={{ fontSize:14, fontWeight:700, color:'#34c759', letterSpacing:'-0.5px' }}>${cheapest.toFixed(2)}</span>
+              {isolated && <span style={{ fontSize:11, color:'#34c759', fontWeight:600 }}>✕</span>}
+            </div>
+          )}
+          <div style={{ ...glass, borderRadius:12, padding:'8px 14px', display:'flex', alignItems:'center', gap:6, boxShadow:'0 2px 12px rgba(0,0,0,0.08)' }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill={textSec}/></svg>
+            <span style={{ fontSize:12, color:textSec, fontWeight:500 }}>{filtered.length} station{filtered.length !== 1 ? 's' : ''} found</span>
+          </div>
+        </div>
+
+        {/* Station list card */}
+        <div style={{ ...glass, borderRadius:18, boxShadow:'0 8px 32px rgba(0,0,0,0.13),0 2px 8px rgba(0,0,0,0.06)', overflow:'hidden', pointerEvents:'all' }}>
+          <button onClick={() => setListOpen(o => !o)} style={{ width:'100%', background:'transparent', border:'none', cursor:'pointer', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+              <div style={{ width:28, height:28, borderRadius:8, background:accent, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/></svg>
+              </div>
+              <span style={{ fontFamily:'inherit', fontSize:15, fontWeight:600, color:glass.color, letterSpacing:'-0.3px' }}>Nearby Stations</span>
+            </div>
+            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+              <div style={{ display:'flex', gap:6 }}>
+                {['distance','price'].map(s => (
+                  <div key={s} onClick={e => { e.stopPropagation(); setSortBy(s); }} style={{
+                    background: sortBy === s ? `${accent}18` : 'transparent',
+                    border: sortBy === s ? `1px solid ${accent}44` : `1px solid ${dividerColor}`,
+                    borderRadius:8, padding:'3px 10px',
+                    fontSize:12, fontFamily:'inherit', fontWeight:500,
+                    color: sortBy === s ? accent : textSec, cursor:'pointer',
+                  }}>
+                    {s === 'distance' ? 'Nearest' : 'Cheapest'}
+                  </div>
+                ))}
+              </div>
+              <svg style={{ transition:'transform 0.2s', transform: listOpen ? 'rotate(180deg)' : 'none' }} width="12" height="8" viewBox="0 0 12 8">
+                <path d="M1 1l5 5 5-5" stroke={textSec} strokeWidth="1.8" strokeLinecap="round" fill="none"/>
+              </svg>
+            </div>
+          </button>
+
+          {listOpen && (
+            <div style={{ maxHeight:d.listMax, overflowY:'auto', borderTop:`1px solid ${dividerColor}` }}>
+              {filtered.map((s, i) => {
+                const price = s.prices[gasType];
+                const isSel = selected?.id === s.id;
+                return (
+                  <button key={s.id} onClick={() => { setSelected(s); leafletMap.current?.panTo([s.lat, s.lng], { animate:true, duration:0.5 }); }} style={{
+                    width:'100%', background: isSel ? `${accent}0d` : 'transparent',
+                    border:'none', cursor:'pointer', padding:'10px 16px',
+                    display:'flex', alignItems:'center', gap:12,
+                    borderBottom: i < filtered.length-1 ? `1px solid ${dividerColor}` : 'none',
+                    textAlign:'left', transition:'background 0.12s',
+                  }}>
+                    <div style={{ width:36, height:36, borderRadius:10, flexShrink:0, background:`${s.color}18`, border:`1.5px solid ${s.color}33`, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                      <span style={{ fontSize:10, fontWeight:700, color:s.color }}>{s.brand.slice(0,2).toUpperCase()}</span>
+                    </div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:14, fontWeight:600, color:glass.color, letterSpacing:'-0.2px' }}>{s.name}</div>
+                      <div style={{ fontSize:12, color:textSec, marginTop:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.address} · {s.distance} mi</div>
+                    </div>
+                    <div style={{ textAlign:'right', flexShrink:0 }}>
+                      <div style={{ fontSize:16, fontWeight:700, color:priceColor(price), letterSpacing:'-0.5px' }}>${price?.toFixed(2)||'—'}</div>
+                      <div style={{ fontSize:11, color:textSec, textTransform:'capitalize' }}>{gasType}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Tweaks Panel ── */}
+      <TweaksPanel tweaks={tweaks} setTweak={setTweak}>
+        <TweakRadio
+          label="Map Style"
+          subtitle="Changes the map's visual theme"
+          tweakKey="mapStyle"
+          options={[
+            { value:"light", label:"Light" },
+            { value:"dark",  label:"Dark"  },
+            { value:"warm",  label:"Warm"  },
+          ]}
+          tweaks={tweaks} setTweak={setTweak}
+        />
+        <TweakSection label="Accent Color">
+          <div style={{ display:'flex', gap:8, marginTop:6 }}>
+            {Object.entries(ACCENT_COLORS).map(([key, hex]) => (
+              <div key={key} onClick={() => setTweak('accentColor', key)} style={{
+                width:32, height:32, borderRadius:'50%', background:hex, cursor:'pointer',
+                outline: tweaks.accentColor === key ? `3px solid ${hex}` : '3px solid transparent',
+                outlineOffset:2, transition:'outline 0.15s',
+                boxShadow:'0 2px 8px rgba(0,0,0,0.18)',
+              }}></div>
+            ))}
+          </div>
+        </TweakSection>
+        <TweakRadio
+          label="UI Density"
+          subtitle="Adjusts spacing and element size"
+          tweakKey="uiDensity"
+          options={[
+            { value:"compact",     label:"Compact"     },
+            { value:"comfortable", label:"Default"     },
+            { value:"spacious",    label:"Spacious"    },
+          ]}
+          tweaks={tweaks} setTweak={setTweak}
+        />
+      </TweaksPanel>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
