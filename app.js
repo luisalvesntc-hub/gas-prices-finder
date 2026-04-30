@@ -311,6 +311,7 @@ function populateBrands() {
     o.textContent = titleCase(br);
     sel.append(o);
   }
+  if (typeof window.__sizeBrand === 'function') window.__sizeBrand();
 }
 
 // ── Filtering / sorting ──────────────────────────────────────────────
@@ -669,9 +670,24 @@ function clearSearch() {
 
 // ── Wire-up ──────────────────────────────────────────────────────────
 function wireUp() {
-  // Map style switcher
-  $$('#map-style-switcher .ms-btn').forEach(btn => {
-    btn.addEventListener('click', () => applyTileStyle(btn.dataset.style));
+  // Map style switcher — desktop: clicks just apply.  Mobile: when
+  // collapsed, only the active dot is visible; tapping it opens a vertical
+  // popover with the three others.  Tapping any dot then applies + closes.
+  const switcher = $('#map-style-switcher');
+  const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+  $$('.ms-dot', switcher).forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (isMobile() && !switcher.classList.contains('is-open') && btn.getAttribute('aria-checked') === 'true') {
+        switcher.classList.add('is-open');
+        return;
+      }
+      applyTileStyle(btn.dataset.style);
+      switcher.classList.remove('is-open');
+    });
+  });
+  document.addEventListener('click', e => {
+    if (!switcher.contains(e.target)) switcher.classList.remove('is-open');
   });
 
   // Search
@@ -729,13 +745,40 @@ function wireUp() {
     render();
   });
 
-  // Brand select
+  // Brand select — dynamic width on desktop so the pill is only as wide
+  // as the selected option text.  Mobile uses a fixed max-width via CSS.
   const brandSel = $('#brand-select');
+  const sizeBrand = () => {
+    if (window.matchMedia('(max-width: 760px)').matches) {
+      brandSel.style.width = '';
+      return;
+    }
+    const opt = brandSel.options[brandSel.selectedIndex];
+    if (!opt) return;
+    const probe = document.createElement('span');
+    const cs = getComputedStyle(brandSel);
+    probe.style.cssText = `
+      visibility:hidden; position:absolute; white-space:pre;
+      font: ${cs.font};
+      letter-spacing: ${cs.letterSpacing};
+    `;
+    probe.textContent = opt.textContent;
+    document.body.append(probe);
+    const w = probe.offsetWidth;
+    document.body.removeChild(probe);
+    brandSel.style.width = (w + 44) + 'px'; // padding (16+26) + buffer
+  };
   brandSel.addEventListener('change', () => {
     state.brand = brandSel.value;
     brandSel.classList.toggle('has-value', !!brandSel.value);
+    sizeBrand();
     render();
   });
+  // Resize on viewport changes (covers DevTools toggle / orientation).
+  window.addEventListener('resize', sizeBrand);
+  // Initial sizing — also re-run after brands populate.
+  setTimeout(sizeBrand, 0);
+  window.__sizeBrand = sizeBrand;
 
   // Radius select
   const radSel = $('#radius-select');
