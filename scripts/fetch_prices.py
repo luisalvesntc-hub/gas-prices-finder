@@ -1,10 +1,9 @@
-"""Fetch every Portuguese fuel station + current prices from DGEG.
+"""Fetch every Portuguese + Spanish fuel station and current prices.
 
-Single source: DGEG's PesquisarPostos endpoint (CORS open, no auth).
-One call returns every (station, fuel) row with coordinates, brand, district,
-municipality, address, price and last-update timestamp.
-
-  https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PesquisarPostos?qtdPorPagina=N&pagina=1
+Sources (both public, no auth, CORS open):
+  - DGEG (PT): https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PesquisarPostos
+  - Ministerio de Industria (ES):
+      https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/
 
 Writes a single snapshot to data/stations.json. The frontend reads this file.
 """
@@ -16,8 +15,13 @@ import time
 from pathlib import Path
 
 import httpx
+from curl_cffi import requests as curl_requests
 
-PESQUISAR = "https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PesquisarPostos"
+PT_URL = "https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PesquisarPostos"
+ES_URL = (
+    "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/"
+    "PreciosCarburantes/EstacionesTerrestres/"
+)
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -25,21 +29,40 @@ UA = (
 )
 HEADERS = {"User-Agent": UA, "Accept": "application/json, */*"}
 
-# Map DGEG fuel labels → stable IDs the frontend uses, plus a display label
-# and an ordering hint. Fuels not listed here are dropped (heating oil etc).
-FUEL_TYPE_MAP = {
-    "Gasolina simples 95":  ("gas95",  "Gasolina 95",  1),
-    "Gasolina especial 95": ("gas95p", "Gasolina 95+", 2),
-    "Gasolina 98":          ("gas98",  "Gasolina 98",  3),
-    "Gasolina especial 98": ("gas98p", "Gasolina 98+", 4),
-    "Gasóleo simples":      ("diesel",  "Gasóleo",      5),
-    "Gasóleo especial":     ("dieselp", "Gasóleo+",     6),
-    "GPL Auto":             ("gpl",     "GPL Auto",     7),
+# Stable IDs the frontend uses, with a display label and an ordering hint.
+FUEL_ORDER = [
+    ("gas95",   "Gasolina 95",  1),
+    ("gas95p",  "Gasolina 95+", 2),
+    ("gas98",   "Gasolina 98",  3),
+    ("gas98p",  "Gasolina 98+", 4),
+    ("diesel",  "Gasóleo",      5),
+    ("dieselp", "Gasóleo+",     6),
+    ("gpl",     "GPL Auto",     7),
+]
+
+PT_FUEL_MAP = {
+    "Gasolina simples 95":  "gas95",
+    "Gasolina especial 95": "gas95p",
+    "Gasolina 98":          "gas98",
+    "Gasolina especial 98": "gas98p",
+    "Gasóleo simples":      "diesel",
+    "Gasóleo especial":     "dieselp",
+    "GPL Auto":             "gpl",
+}
+
+# Spanish fields → fuel id (cheapest variant wins where multiple).
+ES_FUEL_FIELDS = {
+    "Precio Gasolina 95 E5":         "gas95",
+    "Precio Gasolina 95 E5 Premium": "gas95p",
+    "Precio Gasolina 98 E5":         "gas98",
+    "Precio Gasoleo A":              "diesel",
+    "Precio Gasoleo Premium":        "dieselp",
+    "Precio Gases licuados del petróleo": "gpl",
 }
 
 
 def parse_price(s: str) -> float | None:
-    """'1,889 €/litro' or '0,800 €' → 1.889 / 0.800"""
+    """'1,889 €/litro' / '0,800 €' / '1,449' → 1.889 / 0.800 / 1.449"""
     if not s:
         return None
     m = re.search(r"(\d+[.,]\d+)", s)
@@ -51,43 +74,45 @@ def parse_price(s: str) -> float | None:
         return None
 
 
-def fetch_all(client: httpx.Client) -> list[dict]:
-    """One big page. Quantidade tells us the total; we ask for that many."""
-    # Probe to learn the total count, then re-fetch in one shot.
-    r = client.get(PESQUISAR, params={"qtdPorPagina": 1, "pagina": 1}, timeout=30)
+def parse_coord(s) -> float | None:
+    if s is None or s == "":
+        return None
+    if isinstance(s, (int, float)):
+        return float(s)
+    try:
+        return float(str(s).replace(",", "."))
+    except ValueError:
+        return None
+
+
+# ── PT ──────────────────────────────────────────────────────────────────
+def fetch_pt(client: httpx.Client) -> list[dict]:
+    """Single bulk page from DGEG → one entry per station."""
+    r = client.get(PT_URL, params={"qtdPorPagina": 1, "pagina": 1}, timeout=30)
     r.raise_for_status()
     total = (r.json().get("resultado") or [{}])[0].get("Quantidade", 20000)
 
     r = client.get(
-        PESQUISAR,
+        PT_URL,
         params={"qtdPorPagina": max(total, 20000), "pagina": 1},
         timeout=120,
     )
     r.raise_for_status()
-    return r.json().get("resultado") or []
+    rows = r.json().get("resultado") or []
 
-
-def latest_timestamp(rows: list[dict]) -> str:
-    """Most recent DataAtualizacao across all rows for a station."""
-    ts = [r.get("DataAtualizacao") for r in rows if r.get("DataAtualizacao")]
-    return max(ts) if ts else ""
-
-
-def build_stations(rows: list[dict]) -> list[dict]:
     by_id: dict[int, dict] = {}
     for row in rows:
         sid = row.get("Id")
         if sid is None:
             continue
-        lat = row.get("Latitude")
-        lng = row.get("Longitude")
-        if lat in (None, 0) or lng in (None, 0):
+        lat = parse_coord(row.get("Latitude"))
+        lng = parse_coord(row.get("Longitude"))
+        if lat is None or lng is None or (lat == 0 and lng == 0):
             continue
         fuel_label = (row.get("Combustivel") or "").strip()
-        mapped = FUEL_TYPE_MAP.get(fuel_label)
-        if not mapped:
+        fid = PT_FUEL_MAP.get(fuel_label)
+        if not fid:
             continue
-        fid, _disp, _ord = mapped
         price = parse_price(row.get("Preco"))
         if price is None:
             continue
@@ -95,7 +120,8 @@ def build_stations(rows: list[dict]) -> list[dict]:
         st = by_id.get(sid)
         if st is None:
             st = by_id[sid] = {
-                "id": int(sid),
+                "id": f"pt-{sid}",
+                "country": "PT",
                 "name": (row.get("Nome") or "").strip(),
                 "brand": (row.get("Marca") or "").strip() or "Outro",
                 "type": (row.get("TipoPosto") or "").strip(),
@@ -104,47 +130,102 @@ def build_stations(rows: list[dict]) -> list[dict]:
                 "address": (row.get("Morada") or "").strip(),
                 "locality": (row.get("Localidade") or "").strip(),
                 "postcode": (row.get("CodPostal") or "").strip(),
-                "lat": float(lat),
-                "lng": float(lng),
+                "lat": lat,
+                "lng": lng,
                 "prices": {},
                 "updated": "",
-                "_rows": [],
+                "_ts": [],
             }
-        # Cheaper price wins if multiple rows map to same fuel id (rare).
         if fid not in st["prices"] or price < st["prices"][fid]:
             st["prices"][fid] = price
-        st["_rows"].append(row)
-
-    out = []
+        if row.get("DataAtualizacao"):
+            st["_ts"].append(row["DataAtualizacao"])
     for st in by_id.values():
-        st["updated"] = latest_timestamp(st.pop("_rows"))
-        if st["prices"]:
-            out.append(st)
-    out.sort(key=lambda s: s["id"])
+        st["updated"] = max(st.pop("_ts")) if st["_ts"] else ""
+    return list(by_id.values())
+
+
+# ── ES ──────────────────────────────────────────────────────────────────
+def fetch_es(_unused: httpx.Client) -> list[dict]:
+    """One JSON dump from the Ministry of Industry. The endpoint resets
+    plain Python TLS handshakes — curl_cffi impersonates a real browser."""
+    r = curl_requests.get(
+        ES_URL,
+        impersonate="chrome",
+        timeout=120,
+        headers={"Accept": "application/json"},
+    )
+    r.raise_for_status()
+    data = r.json()
+    timestamp = (data.get("Fecha") or "").strip()
+    rows = data.get("ListaEESSPrecio") or []
+    out = []
+    for row in rows:
+        lat = parse_coord(row.get("Latitud"))
+        lng = parse_coord(row.get("Longitud (WGS84)"))
+        if lat is None or lng is None:
+            continue
+        prices: dict[str, float] = {}
+        for field, fid in ES_FUEL_FIELDS.items():
+            p = parse_price(row.get(field))
+            if p is None:
+                continue
+            if fid not in prices or p < prices[fid]:
+                prices[fid] = p
+        if not prices:
+            continue
+        ideess = row.get("IDEESS") or ""
+        rotulo = (row.get("Rótulo") or "").strip()
+        # Ministry entries with no real brand name use "Nº 12345" — flatten those.
+        if not rotulo or rotulo.lower().startswith("nº"):
+            rotulo = "Sin marca"
+        out.append({
+            "id": f"es-{ideess}",
+            "country": "ES",
+            "name": (row.get("Municipio") or row.get("Localidad") or "").strip(),
+            "brand": rotulo.upper(),
+            "type": "",
+            "district": (row.get("Provincia") or "").strip(),
+            "municipality": (row.get("Municipio") or "").strip(),
+            "address": (row.get("Dirección") or "").strip(),
+            "locality": (row.get("Localidad") or "").strip(),
+            "postcode": (row.get("C.P.") or "").strip(),
+            "lat": lat,
+            "lng": lng,
+            "prices": prices,
+            "updated": timestamp,
+        })
     return out
 
 
+# ── Main ────────────────────────────────────────────────────────────────
 def main() -> int:
     out_path = Path(__file__).resolve().parent.parent / "data" / "stations.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
     with httpx.Client(headers=HEADERS, http2=True) as client:
-        print("Fetching DGEG PesquisarPostos…", file=sys.stderr)
-        rows = fetch_all(client)
-        print(f"Got {len(rows)} (station × fuel) rows.", file=sys.stderr)
+        print("Fetching DGEG (PT)…", file=sys.stderr)
+        pt = fetch_pt(client)
+        print(f"  PT: {len(pt)} stations", file=sys.stderr)
 
-    stations = build_stations(rows)
+        print("Fetching Ministerio de Industria (ES)…", file=sys.stderr)
+        try:
+            es = fetch_es(client)
+            print(f"  ES: {len(es)} stations", file=sys.stderr)
+        except Exception as e:
+            print(f"  ES fetch failed ({e}); continuing without Spain.", file=sys.stderr)
+            es = []
+
+    stations = pt + es
+    stations.sort(key=lambda s: (s["country"], s["id"]))
 
     payload = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "count": len(stations),
         "fuel_types": [
             {"id": fid, "label": label, "order": order}
-            for fid, label, order in sorted(
-                ((v[0], v[1], v[2]) for v in FUEL_TYPE_MAP.values()),
-                key=lambda t: t[2],
-            )
+            for fid, label, order in FUEL_ORDER
         ],
         "stations": stations,
     }

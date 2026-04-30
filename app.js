@@ -1,7 +1,7 @@
 /* Gas Prices Finder — frontend.
-   Loads data/stations.json, renders Leaflet markers + a station list with
-   filter pills (fuel type, brand, search, radius) and a "cheapest nearby"
-   shortcut. Pure vanilla JS — no build step. */
+
+   Loads data/stations.json (PT + ES) and renders Leaflet markers + a station
+   list filtered by fuel type, brand, search/city, and radius. */
 
 (() => {
 'use strict';
@@ -9,8 +9,77 @@
 // ── Config ────────────────────────────────────────────────────────────
 const LISBON = [38.7223, -9.1393];
 const DEFAULT_ZOOM = 13;
-const MARKER_CAP = 200;             // hard cap for visible price markers
-const TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+const MARKER_CAP = 250;
+const STORAGE_KEY = 'gpf:tiles';
+
+const TILE_LAYERS = {
+  voyager: {
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '© OpenStreetMap, © CARTO',
+    maxZoom: 19,
+    subdomains: 'abcd',
+  },
+  light: {
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attribution: '© OpenStreetMap, © CARTO',
+    maxZoom: 19,
+    subdomains: 'abcd',
+  },
+  dark: {
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '© OpenStreetMap, © CARTO',
+    maxZoom: 19,
+    subdomains: 'abcd',
+  },
+  satellite: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles © Esri — Source: Esri, USGS, AeroGRID',
+    maxZoom: 19,
+    subdomains: '',
+  },
+};
+
+// Brand → web domain lookup. We use icons.duckduckgo.com which renders the
+// site's high-res favicon; works for most major fuel chains.  Unknown brands
+// fall back to brand initials.
+const BRAND_DOMAIN = {
+  // PT
+  'GALP': 'galp.pt',
+  'REPSOL': 'repsol.pt',
+  'BP': 'bp.com',
+  'CEPSA': 'cepsa.pt',
+  'PRIO': 'prio.pt',
+  'INTERMARCHÉ': 'intermarche.pt',
+  'INTERMARCHE': 'intermarche.pt',
+  'AUCHAN': 'auchan.pt',
+  'CONTINENTE': 'continente.pt',
+  'PINGO DOCE': 'pingodoce.pt',
+  'AVIA': 'avia.pt',
+  'GULF': 'gulf.pt',
+  'OZ': 'ozenergia.pt',
+  'OZ ENERGIA': 'ozenergia.pt',
+  'TFUEL': 'tfuel.pt',
+  'ESCLATOIL': 'esclatoil.com',
+  'PADRÃO': 'padrao-distribuicao.pt',
+  // ES
+  'SHELL': 'shell.com',
+  'PETRONOR': 'petronor.es',
+  'DISA': 'disagrupo.es',
+  'CARREFOUR': 'carrefour.es',
+  'BALLENOIL': 'ballenoil.es',
+  'PLENERGY': 'plenergy.com',
+  'PLENOIL': 'plenoil.es',
+  'ALCAMPO': 'alcampo.es',
+  'MEROIL': 'meroil.com',
+  'SARAS': 'saras.com',
+  'TOTAL': 'totalenergies.com',
+  'TOTALENERGIES': 'totalenergies.com',
+  'ENI': 'eni.com',
+  'AGIP': 'eni.com',
+  'Q8': 'q8.com',
+  'TAMOIL': 'tamoil.com',
+  'GASEXPRESS': 'gasexpres.es',
+};
 
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -23,21 +92,38 @@ const state = {
   fuel: 'gas95',
   brand: '',
   radiusKm: 0,
-  search: '',
+  searchText: '',          // free-text fragment
+  selectedCity: null,      // {name, country, lat, lng} when user picked from autocomplete
   sortBy: 'distance',
   userPos: null,
   selectedId: null,
   listOpen: false,
+  tileStyle: localStorage.getItem(STORAGE_KEY) || 'voyager',
+  cityIndex: [],           // [{key, name, country, lat, lng, count}]
 };
 
 // ── Map ───────────────────────────────────────────────────────────────
 const map = L.map('map', { center: LISBON, zoom: DEFAULT_ZOOM, zoomControl: false });
 L.control.zoom({ position: 'bottomright' }).addTo(map);
-L.tileLayer(TILE_URL, {
-  attribution: '© OpenStreetMap, © CARTO',
-  subdomains: 'abcd',
-  maxZoom: 19,
-}).addTo(map);
+
+let tileLayer = null;
+function applyTileStyle(name) {
+  const cfg = TILE_LAYERS[name] || TILE_LAYERS.voyager;
+  if (tileLayer) tileLayer.remove();
+  tileLayer = L.tileLayer(cfg.url, {
+    attribution: cfg.attribution,
+    maxZoom: cfg.maxZoom,
+    subdomains: cfg.subdomains || 'abc',
+  }).addTo(map);
+  tileLayer.bringToBack();
+  document.body.classList.remove('tiles-voyager', 'tiles-light', 'tiles-dark', 'tiles-satellite');
+  document.body.classList.add('tiles-' + name);
+  state.tileStyle = name;
+  localStorage.setItem(STORAGE_KEY, name);
+  $$('#map-style-switcher .ms-btn').forEach(b =>
+    b.setAttribute('aria-checked', b.dataset.style === name ? 'true' : 'false'));
+}
+applyTileStyle(state.tileStyle);
 
 const markerLayer = L.layerGroup().addTo(map);
 const markerById = new Map();
@@ -58,8 +144,8 @@ function haversineKm(a, b) {
 
 function priceClass(p) {
   if (p == null) return '';
-  if (p < 1.70) return 'p-cheap';
-  if (p < 1.90) return 'p-mid';
+  if (p < 1.55) return 'p-cheap';
+  if (p < 1.85) return 'p-mid';
   return 'p-pricey';
 }
 
@@ -71,14 +157,39 @@ function brandInitials(brand) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || parts[0]?.[1] || '')).toUpperCase();
 }
 
+function brandLogoUrl(brand) {
+  if (!brand) return null;
+  const key = brand.toUpperCase().trim();
+  const domain = BRAND_DOMAIN[key];
+  if (!domain) return null;
+  return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+}
+
 function titleCase(s) {
-  return (s || '').toLowerCase().replace(/(^|\s|-|\/|\.|')([a-záàâãéêíóôõúç])/g,
+  return (s || '').toLowerCase().replace(/(^|\s|-|\/|\.|')([a-záàâãéêíóôõúçñ])/gi,
     (_, p, c) => p + c.toUpperCase());
 }
 
 function fuelLabel(id) {
   const f = state.fuelTypes.find(t => t.id === id);
   return f ? f.label : id;
+}
+
+function flagFor(country) {
+  return country === 'ES' ? '🇪🇸' : country === 'PT' ? '🇵🇹' : '';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+  }[c]));
+}
+
+function shortBrand(b) {
+  if (!b) return '';
+  const t = titleCase(b);
+  if (t.length <= 9) return t;
+  return t.split(' ')[0].slice(0, 9);
 }
 
 function showToast(text, withSpinner = false) {
@@ -96,6 +207,24 @@ function showToast(text, withSpinner = false) {
 }
 function hideToast() { $('#toast').hidden = true; }
 
+// Build a "tile" element (logo if known, initials otherwise).
+function brandTile(brand, cls = 'brand-tile') {
+  const el = document.createElement('div');
+  el.className = cls;
+  const url = brandLogoUrl(brand);
+  if (url) {
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.onerror = () => { el.removeChild(img); el.textContent = brandInitials(brand); };
+    el.append(img);
+  } else {
+    el.textContent = brandInitials(brand);
+  }
+  return el;
+}
+
 // ── Data load ─────────────────────────────────────────────────────────
 async function loadStations() {
   showToast('A carregar postos…', true);
@@ -107,10 +236,14 @@ async function loadStations() {
       ...s,
       _displayName: titleCase(s.name),
       _displayBrand: titleCase(s.brand),
+      _searchHaystack: [
+        s.name, s.brand, s.address, s.locality, s.municipality, s.district,
+      ].join(' ').toLowerCase(),
     }));
     state.fuelTypes = json.fuel_types || [];
     state.generatedAt = json.generated_at || '';
-    populateFuelPills();
+    state.cityIndex = buildCityIndex(state.stations);
+    populateFuelSelect();
     populateBrands();
     hideToast();
   } catch (err) {
@@ -119,34 +252,58 @@ async function loadStations() {
   }
 }
 
-function populateFuelPills() {
-  // Only show fuel types that actually exist in the data.
+// City index: unique (locality | municipality, country) with avg lat/lng
+// across all stations in that city.
+function buildCityIndex(stations) {
+  const buckets = new Map();
+  for (const s of stations) {
+    const cityName = (s.municipality || s.locality || '').trim();
+    if (!cityName) continue;
+    const key = (cityName.toLowerCase() + '|' + s.country);
+    let b = buckets.get(key);
+    if (!b) {
+      b = { name: titleCase(cityName), country: s.country, lat: 0, lng: 0, count: 0 };
+      buckets.set(key, b);
+    }
+    b.lat += s.lat;
+    b.lng += s.lng;
+    b.count += 1;
+  }
+  const idx = [];
+  for (const b of buckets.values()) {
+    if (b.count < 1) continue;
+    idx.push({
+      key: b.name.toLowerCase() + '|' + b.country,
+      name: b.name,
+      country: b.country,
+      lat: b.lat / b.count,
+      lng: b.lng / b.count,
+      count: b.count,
+    });
+  }
+  return idx;
+}
+
+function populateFuelSelect() {
   const available = new Set();
   for (const s of state.stations) for (const k of Object.keys(s.prices)) available.add(k);
   const fuels = state.fuelTypes.filter(f => available.has(f.id));
   if (!fuels.find(f => f.id === state.fuel)) state.fuel = fuels[0]?.id || state.fuel;
 
-  const wrap = $('#fuel-pills');
-  wrap.innerHTML = '';
+  const sel = $('#fuel-select');
+  sel.innerHTML = '';
   for (const f of fuels) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'pill';
-    b.textContent = f.label;
-    b.dataset.fuel = f.id;
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', f.id === state.fuel ? 'true' : 'false');
-    b.addEventListener('click', () => {
-      state.fuel = f.id;
-      $$('.pill[data-fuel]').forEach(p => p.setAttribute('aria-selected', p.dataset.fuel === f.id ? 'true' : 'false'));
-      render();
-    });
-    wrap.append(b);
+    const o = document.createElement('option');
+    o.value = f.id;
+    o.textContent = f.label;
+    sel.append(o);
   }
+  sel.value = state.fuel;
 }
 
 function populateBrands() {
   const sel = $('#brand-select');
+  // Keep "Todas as marcas" then list every distinct brand alphabetically.
   const brands = Array.from(new Set(state.stations.map(s => s.brand))).sort();
   for (const br of brands) {
     const o = document.createElement('option');
@@ -158,31 +315,31 @@ function populateBrands() {
 
 // ── Filtering / sorting ──────────────────────────────────────────────
 function visibleStations() {
-  const { fuel, brand, search, radiusKm, userPos } = state;
-  const center = userPos || map.getCenter();
-  const centerArr = userPos || [center.lat, center.lng];
-  const term = search.trim().toLowerCase();
+  const { fuel, brand, searchText, selectedCity, radiusKm, userPos } = state;
 
   let list = state.stations.filter(s => s.prices[fuel] != null);
 
   if (brand) list = list.filter(s => s.brand === brand);
 
-  if (term) {
-    list = list.filter(s =>
-      s._displayName.toLowerCase().includes(term) ||
-      s.address.toLowerCase().includes(term) ||
-      s.locality.toLowerCase().includes(term) ||
-      s.municipality.toLowerCase().includes(term)
-    );
+  // Free-text search filter (only when no city is locked in).
+  if (!selectedCity && searchText.trim()) {
+    const term = searchText.trim().toLowerCase();
+    list = list.filter(s => s._searchHaystack.includes(term));
   }
 
-  // Distance + radius filter.
+  // Distance from a reference point.  Priority: locked city → user → map center.
+  let centerArr;
+  if (selectedCity) centerArr = [selectedCity.lat, selectedCity.lng];
+  else if (userPos)  centerArr = userPos;
+  else {
+    const c = map.getCenter();
+    centerArr = [c.lat, c.lng];
+  }
   for (const s of list) s._distance = haversineKm(centerArr, [s.lat, s.lng]);
 
   if (radiusKm > 0) {
     list = list.filter(s => s._distance <= radiusKm);
   } else {
-    // "Mapa visível" — use current map bounds.
     const b = map.getBounds();
     list = list.filter(s => b.contains([s.lat, s.lng]));
   }
@@ -213,8 +370,11 @@ function renderMarkers(list) {
     if (isSel) cls.push('is-selected');
     if (isCheap && !isSel) cls.push('is-cheapest');
 
+    const logo = brandLogoUrl(s.brand);
+    const logoImg = logo ? `<img class="pm-logo" src="${escapeHtml(logo)}" alt="" onerror="this.remove()" />` : '';
     const html = `
       <div class="${cls.join(' ')}">
+        ${logoImg}
         <div class="pm-brand">${escapeHtml(shortBrand(s.brand))}</div>
         <div class="pm-price">${formatPrice(price)}</div>
       </div>`;
@@ -223,7 +383,7 @@ function renderMarkers(list) {
       className: '',
       html,
       iconSize: null,
-      iconAnchor: [32, 14],
+      iconAnchor: [32, 18],
     });
     const m = L.marker([s.lat, s.lng], { icon }).addTo(markerLayer);
     m.on('click', () => selectStation(s, { pan: true }));
@@ -231,52 +391,71 @@ function renderMarkers(list) {
   }
 }
 
-function shortBrand(b) {
-  if (!b) return '';
-  const t = titleCase(b);
-  if (t.length <= 9) return t;
-  return t.split(' ')[0].slice(0, 9);
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
-  }[c]));
-}
-
 // ── Popup ────────────────────────────────────────────────────────────
-function popupHtml(s) {
-  const rows = state.fuelTypes
-    .filter(f => s.prices[f.id] != null)
-    .map(f => {
-      const active = f.id === state.fuel ? ' is-active' : '';
-      const p = s.prices[f.id];
-      return `<div class="popup-price-row${active}">
-        <span class="pp-label">${escapeHtml(f.label)}</span>
-        <span class="pp-price ${priceClass(p)}">${formatPrice(p)}</span>
-      </div>`;
-    }).join('');
+function popupNode(s) {
+  const root = document.createElement('div');
+  root.className = 'popup';
 
-  const lat = s.lat, lng = s.lng;
-  const dirUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
-  const dist = state.userPos ? `${s._distance.toFixed(1)} km` : '';
-  const meta = [s.address, s.locality, dist].filter(Boolean).join(' · ');
+  // Head (logo above brand name + station name)
+  const head = document.createElement('div');
+  head.className = 'popup-head';
+  const stack = document.createElement('div');
+  stack.className = 'pop-brand-stack';
+  stack.append(brandTile(s.brand, 'pop-brand-tile'));
+  const bn = document.createElement('div');
+  bn.className = 'pop-brand-name';
+  bn.textContent = s._displayBrand;
+  stack.append(bn);
+  head.append(stack);
 
-  return `
-    <div class="popup">
-      <div class="popup-head">
-        <div class="pop-brand-row">
-          <div class="pop-brand-tile">${escapeHtml(brandInitials(s.brand))}</div>
-          <div class="pop-name">${escapeHtml(s._displayName)}</div>
-        </div>
-        <div class="pop-meta">${escapeHtml(meta)}</div>
-      </div>
-      <div class="popup-prices">${rows}</div>
-      <div class="popup-foot">
-        <a class="popup-directions" href="${dirUrl}" target="_blank" rel="noopener">Direções</a>
-        ${s.updated ? `<div class="popup-updated">Actualizado: ${escapeHtml(s.updated)}</div>` : ''}
-      </div>
-    </div>`;
+  const name = document.createElement('div');
+  name.className = 'pop-name';
+  name.textContent = s._displayName || titleCase(s.locality);
+  head.append(name);
+
+  const meta = document.createElement('div');
+  meta.className = 'pop-meta';
+  const dist = state.userPos || state.selectedCity ? `${s._distance.toFixed(1)} km` : '';
+  meta.textContent = [titleCase(s.address), titleCase(s.locality), dist].filter(Boolean).join(' · ') +
+    (s.country === 'ES' ? '   🇪🇸 Espanha' : '');
+  head.append(meta);
+  root.append(head);
+
+  // Prices
+  const prices = document.createElement('div');
+  prices.className = 'popup-prices';
+  for (const f of state.fuelTypes) {
+    const p = s.prices[f.id];
+    if (p == null) continue;
+    const row = document.createElement('div');
+    row.className = 'popup-price-row' + (f.id === state.fuel ? ' is-active' : '');
+    const lbl = document.createElement('span'); lbl.className = 'pp-label'; lbl.textContent = f.label;
+    const pri = document.createElement('span');
+    pri.className = 'pp-price ' + priceClass(p);
+    pri.textContent = formatPrice(p);
+    row.append(lbl, pri);
+    prices.append(row);
+  }
+  root.append(prices);
+
+  // Foot
+  const foot = document.createElement('div');
+  foot.className = 'popup-foot';
+  const a = document.createElement('a');
+  a.className = 'popup-directions';
+  a.href = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}&travelmode=driving`;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = 'Direções';
+  foot.append(a);
+  if (s.updated) {
+    const u = document.createElement('div');
+    u.className = 'popup-updated';
+    u.textContent = 'Actualizado: ' + s.updated;
+    foot.append(u);
+  }
+  root.append(foot);
+  return root;
 }
 
 function selectStation(s, { pan = false } = {}) {
@@ -284,9 +463,9 @@ function selectStation(s, { pan = false } = {}) {
   if (pan) map.panTo([s.lat, s.lng], { animate: true, duration: 0.4 });
 
   if (activePopup) activePopup.remove();
-  activePopup = L.popup({ closeButton: true, offset: [0, -12], autoPan: true })
+  activePopup = L.popup({ closeButton: true, offset: [0, -14], autoPan: true })
     .setLatLng([s.lat, s.lng])
-    .setContent(popupHtml(s))
+    .setContent(popupNode(s))
     .openOn(map);
   activePopup.on('remove', () => {
     if (state.selectedId === s.id) {
@@ -315,18 +494,22 @@ function renderList(list) {
     btn.type = 'button';
     btn.className = 'station-row' + (s.id === state.selectedId ? ' is-selected' : '');
 
-    const tile = document.createElement('div');
-    tile.className = 'brand-tile';
-    tile.textContent = brandInitials(s.brand);
+    btn.append(brandTile(s.brand));
 
     const info = document.createElement('div');
     info.className = 'station-info';
     const name = document.createElement('div');
     name.className = 'station-name';
-    name.textContent = s._displayName;
+    if (s.country === 'ES') {
+      const flag = document.createElement('span');
+      flag.className = 'country-flag';
+      flag.textContent = '🇪🇸';
+      name.append(flag);
+    }
+    name.append(document.createTextNode(s._displayName || titleCase(s.locality)));
     const meta = document.createElement('div');
     meta.className = 'station-meta';
-    const distStr = state.userPos ? ` · ${s._distance.toFixed(1)} km` : '';
+    const distStr = (state.userPos || state.selectedCity) ? ` · ${s._distance.toFixed(1)} km` : '';
     meta.textContent = `${titleCase(s.address) || titleCase(s.locality)}${distStr}`;
     info.append(name, meta);
 
@@ -341,7 +524,7 @@ function renderList(list) {
     sub.textContent = fuelLabel(state.fuel);
     pb.append(price, sub);
 
-    btn.append(tile, info, pb);
+    btn.append(info, pb);
     btn.addEventListener('click', () => selectStation(s, { pan: true }));
     li.append(btn);
     frag.append(li);
@@ -399,10 +582,9 @@ function locate({ silent = false } = {}) {
       state.userPos = [lat, lng];
       setUserMarker(lat, lng);
       map.setView([lat, lng], DEFAULT_ZOOM, { animate: true });
-      // Switch to a 5 km radius once we know where the user is.
       const radSel = $('#radius-select');
       state.radiusKm = 5;
-      if (radSel) radSel.value = '5';
+      if (radSel) { radSel.value = '5'; radSel.classList.toggle('has-value', false); }
       $('#locate-btn')?.classList.remove('is-locating');
       hideToast();
       render();
@@ -423,30 +605,129 @@ function locate({ silent = false } = {}) {
   );
 }
 
+// ── Autocomplete (cities) ────────────────────────────────────────────
+let acIndex = -1;
+function searchCities(q, max = 8) {
+  const term = q.trim().toLowerCase();
+  if (!term) return [];
+  // Prefer prefix matches, then substring matches; rank by station count.
+  const pref = [], sub = [];
+  for (const c of state.cityIndex) {
+    const lc = c.name.toLowerCase();
+    if (lc.startsWith(term)) pref.push(c);
+    else if (lc.includes(term)) sub.push(c);
+  }
+  pref.sort((a, b) => b.count - a.count);
+  sub.sort((a, b) => b.count - a.count);
+  return pref.concat(sub).slice(0, max);
+}
+
+function renderAutocomplete(items) {
+  const ac = $('#autocomplete');
+  ac.innerHTML = '';
+  if (!items.length) { ac.hidden = true; return; }
+  items.forEach((c, i) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ac-item' + (i === acIndex ? ' is-active' : '');
+    btn.dataset.idx = String(i);
+    btn.innerHTML = `
+      <span class="ac-flag">${flagFor(c.country)}</span>
+      <span class="ac-name">${escapeHtml(c.name)}</span>
+      <span class="ac-meta">${c.count} posto${c.count===1?'':'s'}</span>`;
+    btn.addEventListener('mousedown', e => e.preventDefault());
+    btn.addEventListener('click', () => pickCity(c));
+    li.append(btn);
+    ac.append(li);
+  });
+  ac.hidden = false;
+}
+
+function pickCity(c) {
+  state.selectedCity = c;
+  state.searchText = c.name;
+  $('#search').value = c.name;
+  $('#search-clear').hidden = false;
+  $('#autocomplete').hidden = true;
+  acIndex = -1;
+  // Pan map and let radius do its thing.  If radius is "Mapa visível",
+  // zoom to a reasonable city level.
+  map.setView([c.lat, c.lng], 13, { animate: true });
+  render();
+}
+
+function clearSearch() {
+  state.selectedCity = null;
+  state.searchText = '';
+  $('#search').value = '';
+  $('#search-clear').hidden = true;
+  $('#autocomplete').hidden = true;
+  acIndex = -1;
+  render();
+}
+
 // ── Wire-up ──────────────────────────────────────────────────────────
 function wireUp() {
+  // Map style switcher
+  $$('#map-style-switcher .ms-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyTileStyle(btn.dataset.style));
+  });
+
   // Search
   const searchEl = $('#search');
   const clearEl  = $('#search-clear');
   let searchTimer = null;
   searchEl.addEventListener('input', () => {
-    clearEl.hidden = !searchEl.value;
+    const v = searchEl.value;
+    clearEl.hidden = !v;
+    state.selectedCity = null;
+    state.searchText = v;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
-      state.search = searchEl.value;
+      acIndex = -1;
+      renderAutocomplete(searchCities(v));
       render();
-    }, 120);
+    }, 90);
   });
-  clearEl.addEventListener('click', () => {
-    searchEl.value = '';
-    clearEl.hidden = true;
-    state.search = '';
-    render();
-    searchEl.focus();
+  searchEl.addEventListener('focus', () => {
+    if (searchEl.value && !state.selectedCity) {
+      renderAutocomplete(searchCities(searchEl.value));
+    }
   });
+  searchEl.addEventListener('keydown', e => {
+    const ac = $('#autocomplete');
+    const items = $$('.ac-item', ac);
+    if (e.key === 'ArrowDown' && items.length) {
+      e.preventDefault();
+      acIndex = (acIndex + 1) % items.length;
+      items.forEach((b, i) => b.classList.toggle('is-active', i === acIndex));
+    } else if (e.key === 'ArrowUp' && items.length) {
+      e.preventDefault();
+      acIndex = (acIndex - 1 + items.length) % items.length;
+      items.forEach((b, i) => b.classList.toggle('is-active', i === acIndex));
+    } else if (e.key === 'Enter' && acIndex >= 0 && items[acIndex]) {
+      e.preventDefault();
+      items[acIndex].click();
+    } else if (e.key === 'Escape') {
+      ac.hidden = true; acIndex = -1;
+    }
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#search-wrap')) $('#autocomplete').hidden = true;
+  });
+  clearEl.addEventListener('click', () => { clearSearch(); searchEl.focus(); });
 
   // Locate
   $('#locate-btn').addEventListener('click', () => locate());
+
+  // Fuel select
+  const fuelSel = $('#fuel-select');
+  fuelSel.addEventListener('change', () => {
+    state.fuel = fuelSel.value;
+    fuelSel.classList.toggle('has-value', fuelSel.value !== 'gas95');
+    render();
+  });
 
   // Brand select
   const brandSel = $('#brand-select');
@@ -460,23 +741,22 @@ function wireUp() {
   const radSel = $('#radius-select');
   radSel.addEventListener('change', () => {
     state.radiusKm = Number(radSel.value);
+    radSel.classList.toggle('has-value', radSel.value !== '0');
     render();
   });
 
   // List toggle
   const listToggle = $('#list-toggle');
-  const listEl = $('#station-list');
-  listToggle.addEventListener('click', e => {
-    if (e.target.closest('.sort-tab')) return;
+  const listBody = $('#list-body');
+  listToggle.addEventListener('click', () => {
     state.listOpen = !state.listOpen;
-    listEl.hidden = !state.listOpen;
+    listBody.hidden = !state.listOpen;
     listToggle.setAttribute('aria-expanded', state.listOpen ? 'true' : 'false');
   });
 
-  // Sort tabs
+  // Sort tabs (now inside the expanded panel)
   $$('.sort-tab').forEach(b => {
-    b.addEventListener('click', e => {
-      e.stopPropagation();
+    b.addEventListener('click', () => {
       state.sortBy = b.dataset.sort;
       $$('.sort-tab').forEach(t => t.setAttribute('aria-selected', t === b ? 'true' : 'false'));
       render();
@@ -503,12 +783,10 @@ async function boot() {
   wireUp();
   await loadStations();
   render();
-  // Try to locate on load — silently, since it's nice-to-have on first visit.
   locate({ silent: true });
 }
 
-// Expose for debugging.
-window.__app = { state, map, render, visibleStations };
+window.__app = { state, map, render, visibleStations, applyTileStyle };
 
 boot();
 
