@@ -99,13 +99,17 @@ const state = {
   brand: '',
   radiusKm: 0,
   searchText: '',          // free-text fragment
-  selectedCity: null,      // {name, country, lat, lng} when user picked from autocomplete
+  selectedCity: null,      // {name, country, lat, lng} when the user picked
+                           // a city/street/station from the autocomplete
+  searchAnchor: null,      // distinguishes the kind of pick: 'city' | 'street'
+                           // | 'station' | null
   sortBy: 'distance',
   userPos: null,
   selectedId: null,
   listOpen: false,
   tileStyle: localStorage.getItem(STORAGE_KEY) || 'voyager',
   cityIndex: [],           // [{key, name, country, lat, lng, count}]
+  streetIndex: [],         // [{key, name, locality, country, lat, lng, count}]
 };
 
 // ── Map ───────────────────────────────────────────────────────────────
@@ -271,6 +275,7 @@ async function loadStations() {
     state.fuelTypes = json.fuel_types || [];
     state.generatedAt = json.generated_at || '';
     state.cityIndex = buildCityIndex(state.stations);
+    state.streetIndex = buildStreetIndex(state.stations);
     populateFuelSelect();
     populateBrands();
     hideToast();
@@ -278,6 +283,37 @@ async function loadStations() {
     showToast('Erro a carregar dados: ' + err.message);
     console.error(err);
   }
+}
+
+// Strip the street name out of a raw address: drop trailing numbers,
+// "nº 5" stubs, range "12-14", and anything after the first comma.
+function streetFromAddress(addr) {
+  if (!addr) return '';
+  let s = addr.split(',')[0].trim();
+  s = s.replace(/\s+(?:n[º°.]\s*)?\d+(?:[\s\-]+\d+)*\s*$/i, '').trim();
+  return s;
+}
+
+function buildStreetIndex(stations) {
+  const buckets = new Map();
+  for (const s of stations) {
+    const street = streetFromAddress(s.address);
+    if (!street || street.length < 4) continue;
+    const display = titleCase(street);
+    const locality = titleCase(s.locality || s.municipality || '');
+    const key = (display + '|' + locality + '|' + s.country).toLowerCase();
+    let b = buckets.get(key);
+    if (!b) {
+      b = { name: display, locality, country: s.country, lat: 0, lng: 0, count: 0 };
+      buckets.set(key, b);
+    }
+    b.lat += s.lat; b.lng += s.lng; b.count += 1;
+  }
+  const idx = [];
+  for (const b of buckets.values()) {
+    idx.push({ ...b, lat: b.lat / b.count, lng: b.lng / b.count, key: b.name + '|' + b.locality });
+  }
+  return idx;
 }
 
 // City index: unique (locality | municipality, country) with avg lat/lng
@@ -639,60 +675,184 @@ function locate({ silent = false } = {}) {
   );
 }
 
-// ── Autocomplete (cities) ────────────────────────────────────────────
+// ── Autocomplete (mixed: brands, cities, streets, stations) ─────────
 let acIndex = -1;
-function searchCities(q, max = 8) {
+
+function searchSuggestions(q) {
   const term = q.trim().toLowerCase();
   if (!term) return [];
-  // Prefer prefix matches, then substring matches; rank by station count.
-  const pref = [], sub = [];
+  const out = [];
+
+  // 1) Brand match — only when the query (3+ chars) looks like a brand name.
+  if (term.length >= 2) {
+    for (const [key, info] of Object.entries(BRAND_INFO)) {
+      const d = info.display.toLowerCase();
+      if (d.startsWith(term) || d.replace(/\s+/g, '').startsWith(term)) {
+        const count = state.stations.filter(s => s._brandCanon === key).length;
+        if (count) out.push({ type: 'brand', key, display: info.display, count });
+        break; // one brand suggestion is plenty
+      }
+    }
+  }
+
+  // 2) Cities — prefix > substring, ranked by count.
+  const cPref = [], cSub = [];
   for (const c of state.cityIndex) {
     const lc = c.name.toLowerCase();
-    if (lc.startsWith(term)) pref.push(c);
-    else if (lc.includes(term)) sub.push(c);
+    if (lc.startsWith(term)) cPref.push(c);
+    else if (lc.includes(term)) cSub.push(c);
   }
-  pref.sort((a, b) => b.count - a.count);
-  sub.sort((a, b) => b.count - a.count);
-  return pref.concat(sub).slice(0, max);
+  cPref.sort((a, b) => b.count - a.count);
+  cSub.sort((a, b) => b.count - a.count);
+  cPref.concat(cSub).slice(0, 4).forEach(c => out.push({ type: 'city', ...c }));
+
+  // 3) Streets — prefix > substring, ranked by count.
+  if (term.length >= 3) {
+    const sPref = [], sSub = [];
+    for (const st of state.streetIndex) {
+      const lc = st.name.toLowerCase();
+      if (lc.startsWith(term)) sPref.push(st);
+      else if (lc.includes(term)) sSub.push(st);
+    }
+    sPref.sort((a, b) => b.count - a.count);
+    sSub.sort((a, b) => b.count - a.count);
+    sPref.concat(sSub).slice(0, 3).forEach(s => out.push({ type: 'street', ...s }));
+  }
+
+  // 4) Specific stations — name or address contains the term.
+  if (term.length >= 3) {
+    const stns = [];
+    for (const s of state.stations) {
+      if (s._searchHaystack.includes(term)) {
+        stns.push(s);
+        if (stns.length >= 60) break; // hard cap before sorting
+      }
+    }
+    stns.sort((a, b) => a._displayName.localeCompare(b._displayName));
+    stns.slice(0, 4).forEach(s => out.push({ type: 'station', station: s }));
+  }
+
+  return out.slice(0, 12);
 }
 
 function renderAutocomplete(items) {
   const ac = $('#autocomplete');
   ac.innerHTML = '';
   if (!items.length) { ac.hidden = true; return; }
-  items.forEach((c, i) => {
+  items.forEach((it, i) => {
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'ac-item' + (i === acIndex ? ' is-active' : '');
     btn.dataset.idx = String(i);
-    btn.innerHTML = `
-      <span class="ac-flag">${flagFor(c.country)}</span>
-      <span class="ac-name">${escapeHtml(c.name)}</span>
-      <span class="ac-meta">${c.count} posto${c.count===1?'':'s'}</span>`;
+    btn.innerHTML = renderAcItem(it);
     btn.addEventListener('mousedown', e => e.preventDefault());
-    btn.addEventListener('click', () => pickCity(c));
+    btn.addEventListener('click', () => pickItem(it));
     li.append(btn);
     ac.append(li);
   });
   ac.hidden = false;
 }
 
+function renderAcItem(it) {
+  const lbl = (n, s) => `${n} posto${n === 1 ? '' : 's'}` + (s ? ` · ${s}` : '');
+  if (it.type === 'brand') {
+    const url = brandLogoUrl(it.key);
+    const icon = url
+      ? `<img class="ac-icon ac-logo" src="${escapeHtml(url)}" alt="" onerror="this.style.display='none'">`
+      : `<span class="ac-icon">⛽</span>`;
+    return `${icon}
+      <span class="ac-name">Marca: ${escapeHtml(it.display)}</span>
+      <span class="ac-meta">${lbl(it.count)}</span>`;
+  }
+  if (it.type === 'city') {
+    return `<span class="ac-icon">${flagFor(it.country)}</span>
+      <span class="ac-name">${escapeHtml(it.name)}</span>
+      <span class="ac-meta">${lbl(it.count)}</span>`;
+  }
+  if (it.type === 'street') {
+    return `<span class="ac-icon">📍</span>
+      <span class="ac-name">${escapeHtml(it.name)}</span>
+      <span class="ac-meta">${escapeHtml(it.locality || '')} ${flagFor(it.country)}</span>`;
+  }
+  if (it.type === 'station') {
+    const s = it.station;
+    const url = brandLogoUrl(s._brandCanon);
+    const icon = url
+      ? `<img class="ac-icon ac-logo" src="${escapeHtml(url)}" alt="" onerror="this.style.display='none'">`
+      : `<span class="ac-icon">⛽</span>`;
+    return `${icon}
+      <span class="ac-name">${escapeHtml(s._displayName)}</span>
+      <span class="ac-meta">${escapeHtml(titleCase(s.locality) || s._displayBrand)} ${flagFor(s.country)}</span>`;
+  }
+  return '';
+}
+
+function pickItem(it) {
+  if (it.type === 'brand') return pickBrand(it);
+  if (it.type === 'city') return pickCity(it);
+  if (it.type === 'street') return pickStreet(it);
+  if (it.type === 'station') return pickStation(it.station);
+}
+
+function pickBrand({ key, display }) {
+  state.brand = key;
+  const sel = $('#brand-select');
+  sel.value = key;
+  sel.classList.add('has-value');
+  if (typeof window.__sizeBrand === 'function') window.__sizeBrand();
+  // Clear search box — the active filter is the brand select now.
+  state.selectedCity = null;
+  state.searchText = '';
+  state.searchAnchor = null;
+  $('#search').value = '';
+  $('#search-clear').hidden = true;
+  $('#autocomplete').hidden = true;
+  acIndex = -1;
+  render();
+}
+
 function pickCity(c) {
-  state.selectedCity = c;
+  state.selectedCity = { name: c.name, country: c.country, lat: c.lat, lng: c.lng };
+  state.searchAnchor = 'city';
   state.searchText = c.name;
   $('#search').value = c.name;
   $('#search-clear').hidden = false;
   $('#autocomplete').hidden = true;
   acIndex = -1;
-  // Pan map and let radius do its thing.  If radius is "Mapa visível",
-  // zoom to a reasonable city level.
   map.setView([c.lat, c.lng], 13, { animate: true });
   render();
 }
 
+function pickStreet(st) {
+  state.selectedCity = { name: st.name, country: st.country, lat: st.lat, lng: st.lng };
+  state.searchAnchor = 'street';
+  const label = st.locality ? `${st.name}, ${st.locality}` : st.name;
+  state.searchText = label;
+  $('#search').value = label;
+  $('#search-clear').hidden = false;
+  $('#autocomplete').hidden = true;
+  acIndex = -1;
+  // Streets are tighter than cities — zoom in further.
+  map.setView([st.lat, st.lng], 16, { animate: true });
+  render();
+}
+
+function pickStation(s) {
+  state.selectedCity = { name: s._displayName, country: s.country, lat: s.lat, lng: s.lng };
+  state.searchAnchor = 'station';
+  state.searchText = s._displayName;
+  $('#search').value = s._displayName;
+  $('#search-clear').hidden = false;
+  $('#autocomplete').hidden = true;
+  acIndex = -1;
+  map.setView([s.lat, s.lng], 16, { animate: true });
+  selectStation(s, { pan: false });
+}
+
 function clearSearch() {
   state.selectedCity = null;
+  state.searchAnchor = null;
   state.searchText = '';
   $('#search').value = '';
   $('#search-clear').hidden = true;
@@ -735,13 +895,13 @@ function wireUp() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       acIndex = -1;
-      renderAutocomplete(searchCities(v));
+      renderAutocomplete(searchSuggestions(v));
       render();
     }, 90);
   });
   searchEl.addEventListener('focus', () => {
     if (searchEl.value && !state.selectedCity) {
-      renderAutocomplete(searchCities(searchEl.value));
+      renderAutocomplete(searchSuggestions(searchEl.value));
     }
   });
   searchEl.addEventListener('keydown', e => {
