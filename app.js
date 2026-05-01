@@ -723,16 +723,93 @@ function searchSuggestions(q) {
   if (term.length >= 3) {
     const stns = [];
     for (const s of state.stations) {
-      if (s._searchHaystack.includes(term)) {
-        stns.push(s);
-        if (stns.length >= 60) break; // hard cap before sorting
-      }
+      if (s._searchHaystack.includes(term)) stns.push(s);
     }
-    stns.sort((a, b) => a._displayName.localeCompare(b._displayName));
-    stns.slice(0, 4).forEach(s => out.push({ type: 'station', station: s }));
+    // Prefix matches on the station display name beat substrings.
+    stns.sort((a, b) => {
+      const ap = a._displayName.toLowerCase().startsWith(term);
+      const bp = b._displayName.toLowerCase().startsWith(term);
+      if (ap !== bp) return ap ? -1 : 1;
+      return a._displayName.localeCompare(b._displayName);
+    });
+    stns.slice(0, 6).forEach(s => out.push({ type: 'station', station: s }));
   }
 
-  return out.slice(0, 12);
+  return out.slice(0, 14);
+}
+
+// OSM Nominatim — used to find streets / places that aren't represented
+// in our station data (e.g. searching "Rua do Carmo" when no fuel station
+// sits on that road).  Limited to PT + ES with a per-keystroke debounce.
+let nominatimSeq = 0;
+async function fetchNominatim(q) {
+  const url = 'https://nominatim.openstreetmap.org/search'
+    + '?q=' + encodeURIComponent(q)
+    + '&format=jsonv2&countrycodes=pt,es&limit=8'
+    + '&addressdetails=1&accept-language=pt-PT,pt,es,en';
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return data.filter(d => d.lat && d.lon).map(d => {
+      const a = d.address || {};
+      const cc = (a.country_code || '').toUpperCase();
+      const country = cc === 'PT' || cc === 'ES' ? cc : '';
+      const cityish = a.city || a.town || a.village || a.municipality
+                   || a.county || a.suburb || '';
+      return {
+        type: 'place',
+        name: a.road || d.name || (d.display_name || '').split(',')[0],
+        locality: cityish,
+        country,
+        lat: parseFloat(d.lat),
+        lng: parseFloat(d.lon),
+        kind: d.addresstype || d.type || '',
+        osm_id: d.osm_id,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function runSearch(q) {
+  const local = searchSuggestions(q);
+  renderAutocomplete(local);
+  if (q.length < 4) return;
+
+  const seq = ++nominatimSeq;
+  const remote = await fetchNominatim(q);
+  // Stale response (user typed more) — drop it.
+  if (seq !== nominatimSeq) return;
+  if ($('#search').value !== q) return;
+
+  // Dedupe against local: don't show OSM streets/cities we already have.
+  const seen = new Set();
+  for (const it of local) {
+    if (it.type === 'city')   seen.add('c|' + it.name.toLowerCase());
+    if (it.type === 'street') seen.add('s|' + it.name.toLowerCase());
+  }
+  const remoteUniq = remote.filter(p => {
+    const isStreet = /^(road|residential|street|highway|secondary|tertiary|primary|pedestrian)$/.test(p.kind || '');
+    const k = (isStreet ? 's|' : 'c|') + (p.name || '').toLowerCase();
+    if (!p.name || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  // Insert OSM hits between local cities/streets and stations.
+  const combined = [];
+  let inserted = false;
+  for (const it of local) {
+    if (it.type === 'station' && !inserted) {
+      remoteUniq.slice(0, 5).forEach(p => combined.push(p));
+      inserted = true;
+    }
+    combined.push(it);
+  }
+  if (!inserted) remoteUniq.slice(0, 5).forEach(p => combined.push(p));
+  renderAutocomplete(combined.slice(0, 16));
 }
 
 function renderAutocomplete(items) {
@@ -770,7 +847,7 @@ function renderAcItem(it) {
       <span class="ac-name">${escapeHtml(it.name)}</span>
       <span class="ac-meta">${lbl(it.count)}</span>`;
   }
-  if (it.type === 'street') {
+  if (it.type === 'street' || it.type === 'place') {
     return `<span class="ac-icon">📍</span>
       <span class="ac-name">${escapeHtml(it.name)}</span>
       <span class="ac-meta">${escapeHtml(it.locality || '')} ${flagFor(it.country)}</span>`;
@@ -792,7 +869,39 @@ function pickItem(it) {
   if (it.type === 'brand') return pickBrand(it);
   if (it.type === 'city') return pickCity(it);
   if (it.type === 'street') return pickStreet(it);
+  if (it.type === 'place') return pickPlace(it);
   if (it.type === 'station') return pickStation(it.station);
+}
+
+function pickPlace(p) {
+  // OSM cities → 'city'-like behaviour; everything else (roads, residential,
+  // suburbs, POIs) → 'street'-like behaviour with the closest-pumps radius.
+  const isCity = /^(city|town|village|hamlet|administrative)$/.test(p.kind || '');
+  pickAnchor(p, isCity ? 'city' : 'street');
+}
+
+// Common pick path for streets, places and OSM hits.  Sets the search
+// anchor + label, swaps the radius to "5 km" (so nearby pumps show even
+// when the map view is empty), and zooms to a sensible level.
+function pickAnchor(p, kind) {
+  state.selectedCity = { name: p.name, country: p.country, lat: p.lat, lng: p.lng };
+  state.searchAnchor = kind;
+  const label = p.locality ? `${p.name}, ${p.locality}` : p.name;
+  state.searchText = label;
+  $('#search').value = label;
+  $('#search-clear').hidden = false;
+  $('#autocomplete').hidden = true;
+  acIndex = -1;
+  // Streets / addresses can have no fuel stations on them — switch to a
+  // 5 km radius so the bottom list still surfaces the nearest pumps.
+  if (kind !== 'city') {
+    state.radiusKm = 5;
+    const radSel = $('#radius-select');
+    if (radSel) { radSel.value = '5'; radSel.classList.toggle('has-value', true); }
+  }
+  const zoom = kind === 'city' ? 13 : 15;
+  map.setView([p.lat, p.lng], zoom, { animate: true });
+  render();
 }
 
 function pickBrand({ key, display }) {
@@ -825,17 +934,7 @@ function pickCity(c) {
 }
 
 function pickStreet(st) {
-  state.selectedCity = { name: st.name, country: st.country, lat: st.lat, lng: st.lng };
-  state.searchAnchor = 'street';
-  const label = st.locality ? `${st.name}, ${st.locality}` : st.name;
-  state.searchText = label;
-  $('#search').value = label;
-  $('#search-clear').hidden = false;
-  $('#autocomplete').hidden = true;
-  acIndex = -1;
-  // Streets are tighter than cities — zoom in further.
-  map.setView([st.lat, st.lng], 16, { animate: true });
-  render();
+  pickAnchor(st, 'street');
 }
 
 function pickStation(s) {
@@ -895,7 +994,7 @@ function wireUp() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       acIndex = -1;
-      renderAutocomplete(searchSuggestions(v));
+      runSearch(v);
       render();
     }, 90);
   });
