@@ -788,8 +788,12 @@ function wireUp() {
     }
     const opt = brandSel.options[brandSel.selectedIndex];
     if (!opt) return;
-    const probe = document.createElement('span');
     const cs = getComputedStyle(brandSel);
+    const padL = parseFloat(cs.paddingLeft)  || 0;
+    const padR = parseFloat(cs.paddingRight) || 0;
+    const bdL  = parseFloat(cs.borderLeftWidth)  || 0;
+    const bdR  = parseFloat(cs.borderRightWidth) || 0;
+    const probe = document.createElement('span');
     probe.style.cssText = `
       visibility:hidden; position:absolute; white-space:pre;
       font: ${cs.font};
@@ -799,7 +803,8 @@ function wireUp() {
     document.body.append(probe);
     const w = probe.offsetWidth;
     document.body.removeChild(probe);
-    brandSel.style.width = (w + 44) + 'px'; // padding (16+26) + buffer
+    // +6 px breathing room so the last glyph never clips against the caret.
+    brandSel.style.width = Math.ceil(w + padL + padR + bdL + bdR + 6) + 'px';
   };
   brandSel.addEventListener('change', () => {
     state.brand = brandSel.value;
