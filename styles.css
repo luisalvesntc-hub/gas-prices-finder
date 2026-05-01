@@ -72,8 +72,11 @@ body.tiles-satellite { --tile-filter: none; }
   border-radius: 12px !important;
   overflow: hidden;
   box-shadow: var(--shadow-sm) !important;
-  margin-bottom: calc(var(--safe-bottom) + 14px) !important;
+  /* Always sit just above the bottom panel so the +/- buttons stay
+     clickable next to "Postos próximos" on every viewport. */
+  margin-bottom: calc(var(--bottom-panel-h, 96px) + 6px) !important;
   margin-right: 14px !important;
+  z-index: 1000 !important;
 }
 .leaflet-control-zoom a {
   font-family: inherit !important;
@@ -770,11 +773,8 @@ body.tiles-satellite { --tile-filter: none; }
   }
   .map-style-switcher.is-open .ms-dot { display: inline-block; }
 
-  /* Park the leaflet zoom buttons immediately above the bottom panel. */
-  .leaflet-control-zoom {
-    margin-bottom: calc(var(--bottom-panel-h, 96px) + 6px) !important;
-    z-index: 1000 !important;
-  }
+  /* Mobile-specific tweaks for the zoom controls live with the rest of
+     the rule outside the media query — see top of file. */
 }
 
 @media (max-width: 480px) {
