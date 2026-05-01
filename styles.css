@@ -727,20 +727,34 @@ body.tiles-satellite { --tile-filter: none; }
   /* Drop the auto-width JS sets on desktop — let flex govern. */
   #brand-select { max-width: none; }
 
-  /* Map style: only the active dot visible; tap → vertical popover. */
-  .filter-row-right { position: relative; }
-  .map-style-switcher { padding: 8px; align-items: center; gap: 0; }
-  .map-style-switcher .ms-dot { display: none; }
-  .map-style-switcher .ms-dot[aria-checked="true"] { display: inline-block; }
-
-  .map-style-switcher.is-open {
+  /* Map style: only the active dot visible; tap → vertical popover.
+     The switcher is absolutely positioned so it never reflows the filter
+     row, even when expanded into a column.  filter-row-right keeps a
+     fixed slot to reserve its space. */
+  .filter-row-right {
+    position: relative;
+    flex: 0 0 38px;
+    width: 38px;
+    height: 38px;
+  }
+  .map-style-switcher {
     position: absolute;
     top: 0; right: 0;
+    padding: 8px;
+    align-items: center;
+    gap: 0;
+    z-index: 5;
+  }
+  .map-style-switcher .ms-dot { display: none; }
+  .map-style-switcher .ms-dot[aria-checked="true"] { display: inline-block; }
+  .map-style-switcher.is-open {
     flex-direction: column;
     gap: 8px;
     padding: 8px;
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.1);
     border-radius: 22px;
-    z-index: 5;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.10);
   }
   .map-style-switcher.is-open .ms-dot { display: inline-block; }
 

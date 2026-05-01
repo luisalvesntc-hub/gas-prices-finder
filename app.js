@@ -39,47 +39,53 @@ const TILE_LAYERS = {
   },
 };
 
-// Brand → web domain lookup. We use icons.duckduckgo.com which renders the
-// site's high-res favicon; works for most major fuel chains.  Unknown brands
-// fall back to brand initials.
-const BRAND_DOMAIN = {
+// Allowlist of recognised brands. Anything not matching one of these as a
+// whole word in the raw rótulo is treated as "unknown" and hidden from the
+// brand filter. Display strings preserve the canonical casing the public
+// expects (e.g. "BP" not "Bp"); domains drive the favicon lookup.
+const BRAND_INFO = {
   // PT
-  'GALP': 'galp.pt',
-  'REPSOL': 'repsol.pt',
-  'BP': 'bp.com',
-  'CEPSA': 'cepsa.pt',
-  'PRIO': 'prio.pt',
-  'INTERMARCHÉ': 'intermarche.pt',
-  'INTERMARCHE': 'intermarche.pt',
-  'AUCHAN': 'auchan.pt',
-  'CONTINENTE': 'continente.pt',
-  'PINGO DOCE': 'pingodoce.pt',
-  'AVIA': 'avia.pt',
-  'GULF': 'gulf.pt',
-  'OZ': 'ozenergia.pt',
-  'OZ ENERGIA': 'ozenergia.pt',
-  'TFUEL': 'tfuel.pt',
-  'ESCLATOIL': 'esclatoil.com',
-  'PADRÃO': 'padrao-distribuicao.pt',
+  'GALP':         { display: 'Galp',         domain: 'galp.pt' },
+  'REPSOL':       { display: 'Repsol',       domain: 'repsol.pt' },
+  'BP':           { display: 'BP',           domain: 'bp.com' },
+  'CEPSA':        { display: 'Cepsa',        domain: 'cepsa.pt' },
+  'PRIO':         { display: 'Prio',         domain: 'prio.pt' },
+  'INTERMARCHE':  { display: 'Intermarché',  domain: 'intermarche.pt' },
+  'AUCHAN':       { display: 'Auchan',       domain: 'auchan.pt' },
+  'CONTINENTE':   { display: 'Continente',   domain: 'continente.pt' },
+  'PINGO DOCE':   { display: 'Pingo Doce',   domain: 'pingodoce.pt' },
+  'AVIA':         { display: 'AVIA',         domain: 'avia.pt' },
+  'GULF':         { display: 'Gulf',         domain: 'gulf.pt' },
+  'OZ ENERGIA':   { display: 'OZ Energia',   domain: 'ozenergia.pt' },
+  'OZ':           { display: 'OZ',           domain: 'ozenergia.pt' },
+  'TFUEL':        { display: 'TFuel',        domain: 'tfuel.pt' },
+  'PADRAO':       { display: 'Padrão',       domain: 'padrao-distribuicao.pt' },
   // ES
-  'SHELL': 'shell.com',
-  'PETRONOR': 'petronor.es',
-  'DISA': 'disagrupo.es',
-  'CARREFOUR': 'carrefour.es',
-  'BALLENOIL': 'ballenoil.es',
-  'PLENERGY': 'plenergy.com',
-  'PLENOIL': 'plenoil.es',
-  'ALCAMPO': 'alcampo.es',
-  'MEROIL': 'meroil.com',
-  'SARAS': 'saras.com',
-  'TOTAL': 'totalenergies.com',
-  'TOTALENERGIES': 'totalenergies.com',
-  'ENI': 'eni.com',
-  'AGIP': 'eni.com',
-  'Q8': 'q8.com',
-  'TAMOIL': 'tamoil.com',
-  'GASEXPRESS': 'gasexpres.es',
+  'SHELL':        { display: 'Shell',        domain: 'shell.com' },
+  'PETRONOR':     { display: 'Petronor',     domain: 'petronor.es' },
+  'DISA':         { display: 'DISA',         domain: 'disagrupo.es' },
+  'CARREFOUR':    { display: 'Carrefour',    domain: 'carrefour.es' },
+  'BALLENOIL':    { display: 'Ballenoil',    domain: 'ballenoil.es' },
+  'PLENERGY':     { display: 'Plenergy',     domain: 'plenergy.com' },
+  'PLENOIL':      { display: 'Plenoil',      domain: 'plenoil.es' },
+  'ALCAMPO':      { display: 'Alcampo',      domain: 'alcampo.es' },
+  'MEROIL':       { display: 'Meroil',       domain: 'meroil.com' },
+  'SARAS':        { display: 'Saras',        domain: 'saras.com' },
+  'MOEVE':        { display: 'Moeve',        domain: 'moeve.com' },
+  'TOTAL':        { display: 'Total',        domain: 'totalenergies.com' },
+  'TOTALENERGIES':{ display: 'TotalEnergies',domain: 'totalenergies.com' },
+  'ENI':          { display: 'Eni',          domain: 'eni.com' },
+  'AGIP':         { display: 'Agip',         domain: 'eni.com' },
+  'Q8':           { display: 'Q8',           domain: 'q8.com' },
+  'TAMOIL':       { display: 'Tamoil',       domain: 'tamoil.com' },
+  'ESCLATOIL':    { display: 'Esclatoil',    domain: 'esclatoil.com' },
+  'GASEXPRESS':   { display: 'GasExpress',   domain: 'gasexpres.es' },
 };
+const BRAND_KEYS = Object.keys(BRAND_INFO).sort((a, b) => b.length - a.length);
+function _ascii(s) {
+  return s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toUpperCase();
+}
+const BRAND_KEYS_ASCII = BRAND_KEYS.map(k => ({ key: k, ascii: _ascii(k) }));
 
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -157,12 +163,30 @@ function brandInitials(brand) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || parts[0]?.[1] || '')).toUpperCase();
 }
 
-function brandLogoUrl(brand) {
+// Match the raw brand string against the known-brand allowlist. Returns the
+// canonical key (e.g. "BP", "PINGO DOCE") or null if no whole-word match.
+function canonicalBrand(brand) {
   if (!brand) return null;
-  const key = brand.toUpperCase().trim();
-  const domain = BRAND_DOMAIN[key];
-  if (!domain) return null;
-  return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+  const ascii = _ascii(brand);
+  for (const { key, ascii: k } of BRAND_KEYS_ASCII) {
+    // Whole-word match — \b doesn't always cope with diacritics so we use
+    // explicit non-letter boundaries on either side.
+    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[^A-Z0-9])${escaped}(?=$|[^A-Z0-9])`);
+    if (re.test(ascii)) return key;
+  }
+  return null;
+}
+
+function brandDisplay(canon) {
+  if (!canon) return '—';
+  return BRAND_INFO[canon]?.display || canon;
+}
+
+function brandLogoUrl(canon) {
+  if (!canon) return null;
+  const info = BRAND_INFO[canon];
+  return info?.domain ? `https://icons.duckduckgo.com/ip3/${info.domain}.ico` : null;
 }
 
 function titleCase(s) {
@@ -232,14 +256,18 @@ async function loadStations() {
     const r = await fetch('data/stations.json', { cache: 'no-cache' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const json = await r.json();
-    state.stations = (json.stations || []).map(s => ({
-      ...s,
-      _displayName: titleCase(s.name),
-      _displayBrand: titleCase(s.brand),
-      _searchHaystack: [
-        s.name, s.brand, s.address, s.locality, s.municipality, s.district,
-      ].join(' ').toLowerCase(),
-    }));
+    state.stations = (json.stations || []).map(s => {
+      const canon = canonicalBrand(s.brand);     // null when unknown
+      return {
+        ...s,
+        _brandCanon: canon,
+        _displayBrand: brandDisplay(canon),
+        _displayName: titleCase(s.name),
+        _searchHaystack: [
+          s.name, s.brand, canon || '', s.address, s.locality, s.municipality, s.district,
+        ].join(' ').toLowerCase(),
+      };
+    });
     state.fuelTypes = json.fuel_types || [];
     state.generatedAt = json.generated_at || '';
     state.cityIndex = buildCityIndex(state.stations);
@@ -303,12 +331,16 @@ function populateFuelSelect() {
 
 function populateBrands() {
   const sel = $('#brand-select');
-  // Keep "Todas as marcas" then list every distinct brand alphabetically.
-  const brands = Array.from(new Set(state.stations.map(s => s.brand))).sort();
+  // Only known brands appear in the dropdown.  Unknown ones (a couple of
+  // thousand long-tail rótulos in the Spanish dataset) stay reachable via
+  // "Todas as marcas".
+  const brands = Array.from(new Set(state.stations.map(s => s._brandCanon)))
+    .filter(b => b)
+    .sort((a, b) => brandDisplay(a).localeCompare(brandDisplay(b), 'pt'));
   for (const br of brands) {
     const o = document.createElement('option');
     o.value = br;
-    o.textContent = titleCase(br);
+    o.textContent = brandDisplay(br);
     sel.append(o);
   }
   if (typeof window.__sizeBrand === 'function') window.__sizeBrand();
@@ -320,7 +352,7 @@ function visibleStations() {
 
   let list = state.stations.filter(s => s.prices[fuel] != null);
 
-  if (brand) list = list.filter(s => s.brand === brand);
+  if (brand) list = list.filter(s => s._brandCanon === brand);
 
   // Free-text search filter (only when no city is locked in).
   if (!selectedCity && searchText.trim()) {
@@ -371,12 +403,13 @@ function renderMarkers(list) {
     if (isSel) cls.push('is-selected');
     if (isCheap && !isSel) cls.push('is-cheapest');
 
-    const logo = brandLogoUrl(s.brand);
+    const logo = brandLogoUrl(s._brandCanon);
     const logoImg = logo ? `<img class="pm-logo" src="${escapeHtml(logo)}" alt="" onerror="this.remove()" />` : '';
+    const brandText = s._brandCanon ? s._displayBrand : '';
     const html = `
       <div class="${cls.join(' ')}">
         ${logoImg}
-        <div class="pm-brand">${escapeHtml(shortBrand(s.brand))}</div>
+        ${brandText ? `<div class="pm-brand">${escapeHtml(shortBrand(brandText))}</div>` : ''}
         <div class="pm-price">${formatPrice(price)}</div>
       </div>`;
 
@@ -402,7 +435,7 @@ function popupNode(s) {
   head.className = 'popup-head';
   const stack = document.createElement('div');
   stack.className = 'pop-brand-stack';
-  stack.append(brandTile(s.brand, 'pop-brand-tile'));
+  stack.append(brandTile(s._brandCanon, 'pop-brand-tile'));
   const bn = document.createElement('div');
   bn.className = 'pop-brand-name';
   bn.textContent = s._displayBrand;
@@ -495,7 +528,7 @@ function renderList(list) {
     btn.type = 'button';
     btn.className = 'station-row' + (s.id === state.selectedId ? ' is-selected' : '');
 
-    btn.append(brandTile(s.brand));
+    btn.append(brandTile(s._brandCanon));
 
     const info = document.createElement('div');
     info.className = 'station-info';
